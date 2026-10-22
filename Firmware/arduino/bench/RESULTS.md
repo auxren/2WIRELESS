@@ -35,6 +35,13 @@ Bench, new build (module 259e, addr 0x28, joined after ~60 s):
   The new build re-flashed afterwards was also not joinable within 3 joins (60 s + 3 attempts).
   Needs Oren: AP check / case power cycle, then rerun the stock reference and the new build.
 Final device state: new build (crc C494FF32) flashed.
+Post-analysis (controller, 2026-10-21 23:00): the shift is by design, not a WireByte fault. The capture
+stream is `[addr16][data]` per bus line and a restore (`/setpresets`) feeds FRAM verbatim, so a raw
+getpresets->setpresets round trip re-sends the 2-byte line addresses as data (GetPresets.html/SetPresets.html
+de-interleave first). The second capture was compared with `/readmemory` and equals the FRAM content
+byte-for-byte, which is what the per-byte serving path must deliver. Equivalence to v1.18 remains to be
+shown by B1 (restore the 259e from the de-interleaved cap1, expect re-capture == cap1; then the stock
+reference run).
 
 ## Task 9 (pending bench): OTA round trip A -> B -> A
 
