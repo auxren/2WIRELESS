@@ -13,6 +13,7 @@
 #include "src/WireByte.h"
 #include "src/wpm_loader_blob.h" // first-stage FRAM loader, linked into .sketch_boot (0x2000)
 #include "src/wpm_version.h"
+#include "src/wpm_ota.h"
 #include "src/wpm_json.h"
 #include <WiFi101.h>
 #include <SPI.h>
@@ -2750,6 +2751,12 @@ void handleWifiRequest(WiFiClient client, String urlString){
       tmp = setupPageString.substring(i,i+500);
     }
     client.println();   // The HTTP response ends with another blank line:
+  } else if (urlString.indexOf("/ota/status") >= 0) {
+    wpm_ota_handle_status(client);
+  } else if (urlString.indexOf("/ota/abort") >= 0) {
+    wpm_ota_handle_abort(client);
+  } else if (urlString.indexOf("/ota/commit") >= 0) {
+    wpm_ota_handle_commit(client, urlString);
   } else if (urlString.indexOf("/version") >= 0) {
     DEBUG_PRINTLN("Version Received");
     wpm_send_json(client, wpm_version_json(wpm_loader_present(), getUsbMode(), getPollOnStart()));

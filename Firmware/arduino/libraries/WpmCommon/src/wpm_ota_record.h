@@ -30,7 +30,7 @@ bool wpm_ota_record_parse(const uint8_t raw[WPM_OTA_RECORD_LEN], WpmOtaRecord* o
 // Magic is written iff in->pending; otherwise the first four bytes are zero.
 void wpm_ota_record_serialize(const WpmOtaRecord* in, uint8_t raw[WPM_OTA_RECORD_LEN]);
 
-enum WpmOtaCheck { WPM_OTA_OK, WPM_OTA_ERR_LEN, WPM_OTA_ERR_IMAGE };
+enum WpmOtaCheck { WPM_OTA_OK, WPM_OTA_ERR_LEN, WPM_OTA_ERR_IMAGE, WPM_OTA_ERR_CRC, WPM_OTA_ERR_BUSY };
 
 WpmOtaCheck wpm_ota_check_len(uint32_t len);
 
@@ -39,3 +39,11 @@ WpmOtaCheck wpm_ota_check_vectors(const uint8_t first8[8]);
 
 // 0 -> "none", 1 -> "ok", 2 -> "crc_mismatch", anything else -> "none".
 const char* wpm_ota_last_result_str(uint8_t v);
+
+// /ota/commit decision: first failing check in the order busy, len, image, crc.
+// first8 = first eight bytes of the staged image (FRAM 0).
+WpmOtaCheck wpm_ota_commit_check(uint32_t len, const uint8_t first8[8], uint32_t crc_expected,
+                                 uint32_t crc_actual, bool busy);
+
+// "ok" for WPM_OTA_OK, else "len" | "image" | "crc" | "busy".
+const char* wpm_ota_check_str(WpmOtaCheck c);

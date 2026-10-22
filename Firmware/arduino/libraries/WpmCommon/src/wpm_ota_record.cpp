@@ -69,3 +69,29 @@ const char* wpm_ota_last_result_str(uint8_t v) {
       return "none";
   }
 }
+
+WpmOtaCheck wpm_ota_commit_check(uint32_t len, const uint8_t first8[8], uint32_t crc_expected,
+                                 uint32_t crc_actual, bool busy) {
+  if (busy) return WPM_OTA_ERR_BUSY;
+  WpmOtaCheck c = wpm_ota_check_len(len);
+  if (c != WPM_OTA_OK) return c;
+  c = wpm_ota_check_vectors(first8);
+  if (c != WPM_OTA_OK) return c;
+  return crc_expected == crc_actual ? WPM_OTA_OK : WPM_OTA_ERR_CRC;
+}
+
+const char* wpm_ota_check_str(WpmOtaCheck c) {
+  switch (c) {
+    case WPM_OTA_OK:
+      return "ok";
+    case WPM_OTA_ERR_LEN:
+      return "len";
+    case WPM_OTA_ERR_IMAGE:
+      return "image";
+    case WPM_OTA_ERR_CRC:
+      return "crc";
+    case WPM_OTA_ERR_BUSY:
+      return "busy";
+  }
+  return "image";
+}
