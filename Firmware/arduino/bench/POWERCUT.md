@@ -153,11 +153,11 @@ blinks 3 s and hands off again).
 | 2 | 1 | 21 | | | |
 | 2 | 2 | 22 | | | |
 | 2 | 3 | 23 | | | |
-| 3 | commit | n/a | | | |
+| 3 | commit | n/a | app stayed up | byte at 0x1000 flipped, commit with the original CRC -> `{"ok":false,"error":"crc"}`; byte restored, read-back matches; status none / unknown / a (2026-10-22 12:10) | PASS |
 | 3 | hand record | power cycle | | | |
-| 4 | len=0 / 1001 / 179482 | n/a | | | |
-| 4 | len=1000 image / DEADBEEF crc | n/a | | | |
-| 4 | stock head commit | n/a | | | |
+| 4 | len=0 / 1001 / 179482 | n/a | app stayed up | all three `{"ok":false,"error":"len"}` (2026-10-22 12:05; after the 09:20 bossac reset, not a power cycle) | PASS |
+| 4 | len=1000 image / DEADBEEF crc | n/a | app stayed up | len=1000 over the staged B -> `image` (marker length mismatch); len=113900 crc32=DEADBEEF -> `crc`; abort -> ok; status none / unknown / a | PASS |
+| 4 | stock head commit | n/a | app stayed up | `{"ok":false,"error":"image"}`; status none / unknown / a (2026-10-22 09:20, before Step 1, no reboot) | PASS |
 | 4 | stock record power cycle | power cycle | | | |
-| 5 | brick (USB) | n/a | | | |
-| 5 | recovery | n/a | | | |
+| 5 | brick (USB) | n/a | not watched (owner away); hand-off seen from the Mac | brick.ino.bin (bench-slow-a, app row 0 zeroed) flashed 12:16:11; from 12:16:17 the unit enumerated as "Arduino MKR1000" 0x2341:0x004E and stayed; HTTP never came up | PASS |
+| 5 | recovery | n/a | app up | flash.sh bench-slow-a found the bootloader port (no touch), verify OK; app answered on build a after a second join (wifi_rejoin timed out once at 162 s); status none; staged B marker intact | PASS |
