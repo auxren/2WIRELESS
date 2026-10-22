@@ -43,6 +43,22 @@ byte-for-byte, which is what the per-byte serving path must deliver. Equivalence
 shown by B1 (restore the 259e from the de-interleaved cap1, expect re-capture == cap1; then the stock
 reference run).
 
+## B1 (Task 2 bench), 2026-10-22 — 259e restore and reference capture
+
+Device: T2-era build (WireByte, crc C494FF32) after an Oren case power cycle, USB unplugged; Mac joined
+BUCHLA200E (en1 192.168.0.100), WPM answered /currentpreset and /ssid.
+
+    restore_259e.py new-cap1.json   (cap1 = the original capture taken on stock v1.18 before any flashing)
+    cap1: 1069 bytes, 37 lines, flat bank 0x0000-0x03DE (990 bytes), trailing frame 0400280a28
+    4 POSTs to /writememory (10 lines each) -> HTTP 200 x4 ; /readmemory read-back == flat bank: True
+    /setpresets?addr=28 -> empty 200 ; after 10 s /getpresets?addr=28 -> 1069 bytes, identical to cap1: True
+
+Result: the 259e holds its original presets again, and the WireByte build captures the same 1069 bytes
+that stock v1.18 captured from the same bank (cap1), so the per-byte serving path is equivalent on this
+bank. The separate "re-flash stock v1.18 and capture" step is unnecessary: cap1 is that reference.
+Note: the first POST of part 2 was closed by the WPM without a response when sent 0.5 s after part 1
+(the stock server is still consuming the previous body); 1.5 s spacing + retry fixed it.
+
 ## Task 9 (pending bench): OTA round trip A -> B -> A
 
 Status: tooling built and checked off-device only (formatter test, tagged build, `ota_push.py --dry-run`,

@@ -723,7 +723,22 @@ const static byte PROGMEM favicon[] = {0x00, 0x00, 0x01, 0x00, 0x03, 0x00, 0x10,
 
 int status = WL_IDLE_STATUS;
 WiFiServer server(80);
+#ifdef WPM_DIAG
+#include <utility/WiFiSocket.h>
+static char diagLog[600]; static size_t diagLen = 0;
+static void diag(const char* k, long v) { int n = snprintf(diagLog + diagLen, sizeof diagLog - diagLen, "%s=%ld ", k, v); if (n > 0 && diagLen + n < sizeof diagLog) diagLen += n; }
+static void diagDump() { static unsigned long t; if (millis() - t < 3000) return; t = millis(); if (Serial) { Serial.print("DIAG ms="); Serial.print(millis()); Serial.print(" st="); Serial.print(WiFi.status()); Serial.print(" l0="); Serial.print(WiFiSocket.listening(0)); Serial.print(" "); Serial.println(diagLog); } }
+#define DIAG(k,v) diag(k,(long)(v))
+#define DIAG_HALT() for(;;){ diagDump(); }
+#else
+#define DIAG(k,v)
+#define DIAG_HALT() while (true)
+#endif
 WiFiClient client;
+unsigned long lastListenMs = 0;
+#ifdef WPM_DIAG
+long rebegins = 0, periodicBegins = 0;
+#endif
 
 void setup() {
   //Set this stuff up first so we are ready for firmware requests from modules.
@@ -749,7 +764,9 @@ void setup() {
   // check for the presence of the shield. After a software reset the WINC1500 stays
   // powered; WiFi.end() clears the driver's init flag so the next status() re-inits
   // (and resets) the chip. Retry before giving up.
+  DIAG("rcause", PM->RCAUSE.reg);
   for (int attempt = 0; attempt < 3; attempt++) {
+    DIAG("shield", WiFi.status());
     if (WiFi.status() != WL_NO_SHIELD) break;
     WiFi.end();
     delay(500);
@@ -757,7 +774,7 @@ void setup() {
   if (WiFi.status() == WL_NO_SHIELD) {
     DEBUG_PRINTLN("WiFi shield not present");
     // don't continue
-    while (true);
+    DIAG_HALT();
   }
 
   // by default the local IP address of will be 192.168.1.1
@@ -796,15 +813,17 @@ void setup() {
     } else {
       status = WiFi.beginAP(ssid,pass);
     }
+    DIAG("ap", status);
     if (status == WL_AP_LISTENING) break;
   }
   
   if (status != WL_AP_LISTENING) {
     DEBUG_PRINTLN("Creating access point failed");
     // don't continue
-    while (true);
+    DIAG_HALT();
   }
   server.begin(); // once; never re-begin on association churn
+  DIAG("l0", WiFiSocket.listening(0));
 
   // wait 10 seconds for connection:
   //delay(10000);
@@ -843,6 +862,9 @@ void setup() {
 
 
 void loop() {
+#ifdef WPM_DIAG
+  diagDump();
+#endif
   // compare the previous status to the current status
   if (status != WiFi.status()) {
     // it has changed update the variable
@@ -853,6 +875,11 @@ void loop() {
       DEBUG_PRINT("Device connected to AP, MAC address: ");
       WiFi.APClientMacAddress(remoteMac);
       printMacAddress(remoteMac);
+      // The WINC1500 drops the AP-mode listening socket when a station (re)associates while
+      // the driver still reports it as listening; recreate it (stock did this per association).
+      server.begin();
+      lastListenMs = millis();
+      DIAG("rb", ++rebegins);
     } else {
       // a device has disconnected from the AP, and we are back in listening mode
       DEBUG_PRINTLN("Device disconnected from AP");
@@ -860,6 +887,13 @@ void loop() {
     }
   }
   
+  // Fallback for a disconnect+reconnect missed between two loop iterations (e.g. during a long
+  // capture): refresh the listener while a station is connected. No client is ever active here.
+  if (status == WL_AP_CONNECTED && millis() - lastListenMs > 10000) {
+    server.begin();
+    lastListenMs = millis();
+    DIAG("pb", ++periodicBegins);
+  }
   client = server.available();   // listen for incoming clients
   //When web page is served, we return to this with no client. 
   //TO DO: If device was disconnected from AP, then it seems AP needs to be reconstructed here.
