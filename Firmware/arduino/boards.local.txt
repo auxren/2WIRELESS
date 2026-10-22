@@ -86,4 +86,5 @@ wpm_loader.bootloader.tool=openocd
 wpm_loader.bootloader.tool.default=openocd
 wpm_loader.bootloader.file=mkr1000/samd21_sam_ba_arduino_mkr1000.bin
 wpm_loader.name=Studio H WPM loader (MKR1000, no USB)
-wpm_loader.build.usb_flags=
+# No USBCON (main() never inits USB), but the core headers need CDC_ENABLED for LineInfo.
+wpm_loader.build.usb_flags=-DCDC_ENABLED

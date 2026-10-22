@@ -1,0 +1,125 @@
+// First-stage FRAM loader for the 2WIRELESS WPM. Built for the wpm_loader
+// profile (no USB), embedded in the app's .sketch_boot section at flash
+// 0x2000..0x5FFF; the application proper starts at 0x6000.
+//
+// Boot: read the 18-byte OTA record from FRAM. If an update is pending, verify
+// the staged image CRC, copy it row by row to flash from 0x6000, verify the
+// flash CRC, record the result and reset. Otherwise jump to the application,
+// or blink the LED at 5 Hz if the application vectors are not plausible.
+// Only pins 4 (FRAM CS), 8/9/10 (SPI) and LED_BUILTIN are ever touched.
+#include <Arduino.h>
+#include <SPI.h>
+#include <wpm_crc32.h>
+#include <wpm_loader_logic.h>
+#include <wpm_ota_record.h>
+
+#include "fram.h"
+#include "nvm.h"
+
+static void write_record(const WpmOtaRecord& r) {
+  uint8_t raw[WPM_OTA_RECORD_LEN];
+  wpm_ota_record_serialize(&r, raw);
+  fram_write(WPM_OTA_RECORD_ADDR, raw, WPM_OTA_RECORD_LEN);
+}
+
+// Clear the pending magic and report a failed stage (last_result = 2).
+static void reject(WpmOtaRecord& r) {
+  r.pending = false;
+  r.last_result = 2;
+  write_record(r);
+  fram_end();
+  NVIC_SystemReset();
+}
+
+static bool flash_app_ok() {
+  uint8_t v[8];
+  memcpy(v, (const void*)WPM_APP_FLASH_BASE, 8);
+  return wpm_ota_check_vectors(v) == WPM_OTA_OK;
+}
+
+[[noreturn]] static void jump_to_app() {
+  fram_end();  // SPI off, CS back to input: leave the pins as the app expects
+  digitalWrite(LED_BUILTIN, LOW);
+  pinMode(LED_BUILTIN, INPUT);
+  __disable_irq();
+  SysTick->CTRL = 0;
+  SCB->VTOR = WPM_APP_FLASH_BASE;
+  __set_MSP(*(volatile uint32_t*)WPM_APP_FLASH_BASE);
+  ((void (*)(void))(*(volatile uint32_t*)(WPM_APP_FLASH_BASE + 4)))();
+  for (;;) {
+  }
+}
+
+[[noreturn]] static void blink_forever() {
+  fram_end();
+  pinMode(LED_BUILTIN, OUTPUT);
+  for (;;) {  // 5 Hz: 100 ms on, 100 ms off
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(100);
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(100);
+  }
+}
+
+// CRC32 of FRAM [0, len) in 256-byte chunks.
+static uint32_t fram_image_crc(uint32_t len) {
+  uint8_t buf[NVM_ROW_SIZE];
+  uint32_t crc = 0xFFFFFFFFu;
+  for (uint32_t off = 0; off < len; off += NVM_ROW_SIZE) {
+    uint32_t n = len - off < NVM_ROW_SIZE ? len - off : NVM_ROW_SIZE;
+    fram_read(off, buf, n);
+    crc = wpm_crc32_update(crc, buf, n);
+  }
+  return crc ^ 0xFFFFFFFFu;
+}
+
+static void copy_image(WpmOtaRecord& r) {
+  uint8_t buf[NVM_ROW_SIZE];
+  for (uint32_t off = 0; off < r.len; off += NVM_ROW_SIZE) {
+    uint32_t n = r.len - off < NVM_ROW_SIZE ? r.len - off : NVM_ROW_SIZE;
+    fram_read(off, buf, n);
+    for (uint32_t i = n; i < NVM_ROW_SIZE; i++) buf[i] = 0xFF;  // pad last row
+    nvm_erase_row(WPM_APP_FLASH_BASE + off);
+    for (uint32_t p = 0; p < NVM_ROW_SIZE; p += NVM_PAGE_SIZE) {
+      nvm_write_page(WPM_APP_FLASH_BASE + off + p, buf + p);
+    }
+  }
+}
+
+static void do_copy(WpmOtaRecord& r) {
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH);
+
+  if (wpm_ota_check_len(r.len) != WPM_OTA_OK) reject(r);
+  if (fram_image_crc(r.len) != r.crc32) reject(r);
+
+  NVMCTRL->CTRLB.bit.CACHEDIS = 1;  // verify reads must see the fresh flash
+  copy_image(r);
+
+  uint32_t crc = wpm_crc32((const uint8_t*)WPM_APP_FLASH_BASE, r.len);
+  if (crc == r.crc32) {
+    r.pending = false;
+    r.last_result = 1;
+    r.app_crc32 = crc;
+    write_record(r);
+  }
+  // On mismatch the magic stays, so the copy re-runs on the next boot.
+  fram_end();
+  NVIC_SystemReset();
+}
+
+void setup() {
+  fram_begin();
+  uint8_t raw[WPM_OTA_RECORD_LEN];
+  fram_read(WPM_OTA_RECORD_ADDR, raw, WPM_OTA_RECORD_LEN);
+  WpmOtaRecord r;
+  wpm_ota_record_parse(raw, &r);
+
+  switch (wpm_loader_decide(r.pending, flash_app_ok())) {
+    case WPM_LOADER_COPY: do_copy(r); break;
+    case WPM_LOADER_JUMP: jump_to_app(); break;
+    default: blink_forever(); break;
+  }
+}
+
+void loop() {}

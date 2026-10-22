@@ -11,6 +11,7 @@
  *   12      D12   |  PA09  | "SCL"
 */
 #include "src/WireByte.h"
+#include "src/wpm_loader_blob.h" // first-stage FRAM loader, linked into .sketch_boot (0x2000)
 #include <WiFi101.h>
 #include <SPI.h>
 #include <usbh_midi.h>
