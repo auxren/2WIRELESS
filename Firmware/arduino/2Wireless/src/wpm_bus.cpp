@@ -8,7 +8,8 @@
 
 // Defined in 2Wireless.ino.
 extern bool v2version;
-bool wpm_bus_master_query(uint8_t addr);
+bool wpm_bus_master_query(uint8_t addr, bool v2);
+void writeHeader(WiFiClient client, String statusString, String contentType, int contentLength);
 bool wpm_bus_master_polldone();
 uint8_t framRead(int addr);
 
@@ -21,7 +22,11 @@ static WpmBusScan scan;
 // ISR-written, main-loop-read (32-bit / byte accesses are atomic on the SAMD21).
 static volatile uint32_t last_frame_ms = 0;
 static volatile bool frame_seen = false;
+// v2version is recomputed per HTTP request (any /v2/ request flips it), so latch it at scan start.
+static bool scan_v2 = false;
 
+// Not reached while a /getpresets capture caches I2C to FRAM or while i2c_guard is set, so
+// bus_quiet can read true during a capture.
 void wpm_bus_note_frame() {
   last_frame_ms = millis();
   frame_seen = true;
@@ -37,7 +42,7 @@ bool wpm_bus_scan_active() { return scan.state() == WPM_SCAN_SCANNING; }
 
 void wpm_bus_loop() {
   if (scan.step(millis()) == WPM_SCAN_ACT_QUERY) {
-    if (!wpm_bus_master_query(scan.current_addr())) scan.query_failed(millis());
+    if (!wpm_bus_master_query(scan.current_addr(), scan_v2)) scan.query_failed(millis());
   }
 }
 
@@ -81,6 +86,7 @@ void wpm_bus_handle_scan(WiFiClient& client, const String& urlString) {
     return;
   }
   if (wpm_bus_scan_active()) {
+    scan.set_error(WPM_BUS_ERR_BUSY);
     wpm_send_json(client, wpm_json_err("busy"));
     return;
   }
@@ -110,21 +116,32 @@ void wpm_bus_handle_scan(WiFiClient& client, const String& urlString) {
     return;
   }
   switch (scan.start(first, last, millis(), window)) {
-    case WPM_BUS_ERR_NONE: wpm_send_json(client, "{\"ok\":true}"); break;
+    case WPM_BUS_ERR_NONE:
+      scan_v2 = v2version;
+      wpm_send_json(client, "{\"ok\":true}");
+      break;
     case WPM_BUS_ERR_BUSY: wpm_send_json(client, wpm_json_err("busy")); break;
     default: wpm_send_json(client, wpm_json_err("args")); break;
   }
 }
 
+// Streamed in chunks (chunked transfer, like /getpresets): WiFi101 rejects a single send over
+// 1400 bytes, which a full sweep would exceed. Heap use stays under ~500 bytes.
+static void sendChunk(WiFiClient& client, String& chunk) {
+  client.println(chunk.length(), HEX);
+  client.println(chunk);
+  chunk = "";
+}
+
 void wpm_bus_handle_scan_status(WiFiClient& client) {
+  writeHeader(client, "HTTP/1.1 200 OK", "Content-type:application/json", -1);
   char buf[96];
-  size_t n = wpm_scan_status_head_json(scan.state(), scan.idx(), scan.count(), buf, sizeof buf);
-  String body;
-  body.reserve(n + scan.count() * 80 + 4);
-  body += buf;
-  for (size_t i = 0; i < scan.count(); i++) {
-    if (i) body += ",";
-    char e[96];
+  wpm_scan_status_head_json(scan.state(), scan.idx(), scan.count(), buf, sizeof buf);
+  String chunk = buf;
+  size_t n = scan.count();
+  for (size_t i = 0; i < n; i++) {
+    if (i) chunk += ",";
+    char e[112];
     WpmScanFound f = scan.found()[i];
     if (!f.ver_valid) {  // fall back to the version the stock display cache last saw for this module
       uint8_t c[1 + WPM_SCAN_VER_LEN];
@@ -138,10 +155,13 @@ void wpm_bus_handle_scan_status(WiFiClient& client) {
         f.ver_src = WPM_VER_SRC_CACHE;
       }
     }
-    if (wpm_scan_entry_json(f, e, sizeof e)) body += e;
+    if (wpm_scan_entry_json(f, e, sizeof e)) chunk += e;
+    if (chunk.length() >= 400) sendChunk(client, chunk);
   }
-  body += "]}";
-  wpm_send_json(client, body);
+  chunk += "]}";
+  sendChunk(client, chunk);
+  client.println("0");
+  client.println();
 }
 
 // last_error mirrors the scan's last_error(): start() sets it (busy/args) and clears it on

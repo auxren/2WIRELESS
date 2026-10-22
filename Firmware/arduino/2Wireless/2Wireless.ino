@@ -1414,6 +1414,8 @@ void receiveEvent(int howMany) {
             moduleVersion = moduleVersion + char(vb);
             byteCount++;
           } 
+          //Note: the DISPLAY_EVENT mask match above is loose (stock behaviour), so a non-0x13 frame with a
+          //superset of those bits also reaches here.
           wpm_bus_on_version_frame(moduleAddr, ver7);
           setDisplayMessage(0,moduleVersion);
         }
@@ -1561,8 +1563,8 @@ void sendQuery(byte address) {
 }
 
 // Bus-scan helpers: like sendQuery()/sendPollingComplete() but report whether the master send began.
-bool wpm_bus_master_query(uint8_t address) {
-    if (v2version) return false; //Query is not supported
+bool wpm_bus_master_query(uint8_t address, bool v2) {
+    if (v2) return false; //Query is not supported (v2 latched at scan start)
     if (masterBeginTransmission(0) != 0) return false;
     Wire.write(0x04);
     Wire.write(address);
