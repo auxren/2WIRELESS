@@ -11,6 +11,10 @@ static bool eq_rec(const WpmOtaRecord& a, const WpmOtaRecord& b) {
          a.pending == b.pending;
 }
 
+static void put32(uint8_t* p, uint32_t v) {
+  for (int i = 0; i < 4; i++) p[i] = static_cast<uint8_t>(v >> (8 * i));
+}
+
 int main() {
   // Round trip with pending=true: magic and little-endian len on the wire.
   {
@@ -51,7 +55,6 @@ int main() {
     CHECK(wpm_ota_record_parse(zero, &out));
     CHECK(!out.pending);
     CHECK(std::strcmp(wpm_ota_last_result_str(out.last_result), "none") == 0);
-    CHECK(std::strcmp(wpm_ota_last_result_str(3), "none") == 0);
     CHECK(std::strcmp(wpm_ota_last_result_str(0xFF), "none") == 0);
   }
 
@@ -65,22 +68,47 @@ int main() {
   CHECK(wpm_ota_check_len(0x2BD1Au) == WPM_OTA_ERR_LEN);
   CHECK(wpm_ota_check_len(0x3A000u) == WPM_OTA_ERR_LEN);
 
-  // Vector checks (first 8 bytes of the image at 0x6000).
+  // Head checks (first 44 bytes of the image at 0x6000).
   {
-    const uint8_t reset_4b05[8] = {0x00, 0x80, 0x00, 0x20, 0x05, 0x4B, 0x00, 0x00};
-    // a 0x2000-linked image (stock v1.18 reset vector) passes: the vector check cannot distinguish link bases; only build.sh .ota.bin outputs are valid OTA images
-    const uint8_t linked_2000_cb05[8] = {0x00, 0x80, 0x00, 0x20, 0x05, 0xCB, 0x00, 0x00};
-    const uint8_t ok_6b05[8] = {0x00, 0x80, 0x00, 0x20, 0x05, 0x6B, 0x00, 0x00};
-    const uint8_t even_6b04[8] = {0x00, 0x80, 0x00, 0x20, 0x04, 0x6B, 0x00, 0x00};
-    const uint8_t sp_above_ram[8] = {0x00, 0x80, 0x00, 0x21, 0x05, 0x6B, 0x00, 0x00};
-    const uint8_t all_ff[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-    CHECK(wpm_ota_check_vectors(reset_4b05) == WPM_OTA_ERR_IMAGE);
-    CHECK(wpm_ota_check_vectors(linked_2000_cb05) == WPM_OTA_OK);
-    CHECK(wpm_ota_check_vectors(ok_6b05) == WPM_OTA_OK);
-    CHECK(wpm_ota_check_vectors(even_6b04) == WPM_OTA_ERR_IMAGE);
-    CHECK(wpm_ota_check_vectors(sp_above_ram) == WPM_OTA_ERR_IMAGE);
-    CHECK(wpm_ota_check_vectors(all_ff) == WPM_OTA_ERR_IMAGE);
+    const uint8_t stock[WPM_OTA_HEAD_LEN] = {0x00, 0x80, 0x00, 0x20, 0x05, 0xcb, 0x00, 0x00,
+                                             0xed, 0xca, 0x00, 0x00, 0xed, 0xca, 0x00, 0x00};
+    CHECK(wpm_ota_check_head(stock, 108612) == WPM_OTA_ERR_IMAGE);
+    CHECK(wpm_ota_check_head(stock, 0) == WPM_OTA_ERR_IMAGE);
+
+    const uint8_t magic[8] = {'W', 'P', 'M', 'A', 'P', 'P', '1', 0};
+    const uint8_t magic2[8] = {'W', 'P', 'M', 'A', 'P', 'P', '2', 0};
+    const uint8_t zero8[8] = {0};
+    uint8_t h[WPM_OTA_HEAD_LEN];
+    auto mk = [&](uint32_t sp, uint32_t reset, const uint8_t* m, uint32_t base, uint32_t mlen) {
+      std::memset(h, 0, sizeof h);
+      put32(h, sp);
+      put32(h + 4, reset);
+      std::memcpy(h + WPM_APP_MARKER_OFF, m, 8);
+      put32(h + WPM_APP_MARKER_OFF + 8, base);
+      put32(h + WPM_APP_MARKER_OFF + 12, mlen);
+    };
+    mk(0x20008000u, 0x000140D9u, magic, 0x6000u, 113868u);
+    CHECK(wpm_ota_check_head(h, 113868) == WPM_OTA_OK);
+    CHECK(wpm_ota_check_head(h, 0) == WPM_OTA_OK);
+    CHECK(wpm_ota_check_head(h, 113870) == WPM_OTA_ERR_IMAGE);
+    CHECK(wpm_ota_check_head(h, 113866) == WPM_OTA_ERR_IMAGE);
+    mk(0x20008000u, 0x000140D9u, magic, 0x2000u, 113868u);
+    CHECK(wpm_ota_check_head(h, 113868) == WPM_OTA_ERR_IMAGE);
+    mk(0x20008000u, 0x000140D9u, magic2, 0x6000u, 113868u);
+    CHECK(wpm_ota_check_head(h, 113868) == WPM_OTA_ERR_IMAGE);
+    mk(0x20008000u, 0x000140D9u, zero8, 0x6000u, 113868u);
+    CHECK(wpm_ota_check_head(h, 113868) == WPM_OTA_ERR_IMAGE);
+    mk(0x20008000u, 0x000140D8u, magic, 0x6000u, 113868u);
+    CHECK(wpm_ota_check_head(h, 113868) == WPM_OTA_ERR_IMAGE);
+    mk(0x20008000u, 0x00004B05u, magic, 0x6000u, 113868u);
+    CHECK(wpm_ota_check_head(h, 113868) == WPM_OTA_ERR_IMAGE);
+    mk(0x20008004u, 0x000140D9u, magic, 0x6000u, 113868u);
+    CHECK(wpm_ota_check_head(h, 113868) == WPM_OTA_ERR_IMAGE);
+    std::memset(h, 0xFF, sizeof h);
+    CHECK(wpm_ota_check_head(h, 0) == WPM_OTA_ERR_IMAGE);
   }
+  CHECK(std::strcmp(wpm_ota_last_result_str(3), "image") == 0);
+  CHECK(std::strcmp(wpm_ota_last_result_str(4), "none") == 0);
 
   std::printf("test_ota_record: %d failures\n", minitest_failures);
   return minitest_failures;

@@ -83,7 +83,7 @@ fi
 
 if [ "$SKETCH" = "2Wireless" ] && [ "$PROFILE" = "wpm" ]; then
   # Full image = loader blob (0x2000..0x5FFF) + app (0x6000..). Check both
-  # vector tables, then emit the app-only OTA image (bin minus first 0x4000).
+  # vector tables, stamp the app marker, then emit the app-only OTA image (bin minus first 0x4000).
   python3 - "$BIN" "$OUT/2Wireless.ota.bin" "$HERE/build/FramLoader/FramLoader.ino.bin" <<'PYEOF'
 import struct, sys, zlib
 d = open(sys.argv[1], "rb").read()
@@ -100,12 +100,24 @@ if not (0x20000000 < asp <= 0x20008000) or not (0x6000 <= (arst & ~1) < 0x40000)
 ldr = open(sys.argv[3], "rb").read()
 if d[:0x4000] != ldr + b"\xff" * (0x4000 - len(ldr)):
     sys.exit("error: stale loader blob: run build.sh FramLoader")
+if d[0x401C:0x402C] != bytes(16):
+    sys.exit("error: app marker slot 0x401C not empty")
+ota_len = len(d) - 0x4000
+if ota_len % 2 or ota_len > 0x2BD18:
+    sys.exit("error: OTA image length %d must be even and <= 0x2BD18" % ota_len)
+# Stamp the app marker (vector entries 7..10, reserved on ARMv6-M): magic, link base, length.
+d = bytearray(d)
+d[0x401C:0x402C] = b"WPMAPP1\0" + struct.pack("<II", 0x6000, ota_len)
+d = bytes(d)
+open(sys.argv[1], "wb").write(d)
 ota = d[0x4000:]
-if len(ota) % 2 or len(ota) > 0x2BD18:
-    sys.exit("error: OTA image length %d must be even and <= 0x2BD18" % len(ota))
 open(sys.argv[2], "wb").write(ota)
+print("app marker: base 0x6000 len %d at 0x401C" % ota_len)
+print("stamped full image: size %d crc32 %08X" % (len(d), zlib.crc32(d) & 0xffffffff))
 print("embedded loader: %d bytes crc32 %08X (blob padded to 0x4000)" % (len(ldr), zlib.crc32(ldr) & 0xffffffff))
 print("vectors ok: loader sp=%08X reset=%08X, app sp=%08X reset=%08X" % (sp, rst, asp, arst))
 print("ota size %d crc32 %08X -> %s" % (len(ota), zlib.crc32(ota) & 0xffffffff, sys.argv[2]))
 PYEOF
+  # The .hex is unstamped (no marker); flash.sh takes the stamped .bin, so drop the .hex.
+  rm -f "$OUT/2Wireless.ino.hex"
 fi

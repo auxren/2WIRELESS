@@ -50,13 +50,22 @@ WpmOtaCheck wpm_ota_check_len(uint32_t len) {
   return WPM_OTA_OK;
 }
 
-WpmOtaCheck wpm_ota_check_vectors(const uint8_t first8[8]) {
-  const uint32_t word0 = read_le32(first8);
-  const uint32_t word1 = read_le32(first8 + 4);
+const uint8_t WPM_APP_MARKER_MAGIC[8] = {0x57, 0x50, 0x4D, 0x41, 0x50, 0x50, 0x31, 0x00};
+
+WpmOtaCheck wpm_ota_check_head(const uint8_t head[WPM_OTA_HEAD_LEN], uint32_t len) {
+  const uint32_t word0 = read_le32(head);
+  const uint32_t word1 = read_le32(head + 4);
   const bool sp_ok = word0 >= 0x20000000u && word0 <= 0x20008000u;
   const bool reset_ok = (word1 & 1u) == 1u && word1 >= WPM_APP_FLASH_BASE &&
                         word1 < WPM_FLASH_END;
-  return (sp_ok && reset_ok) ? WPM_OTA_OK : WPM_OTA_ERR_IMAGE;
+  if (!sp_ok || !reset_ok) return WPM_OTA_ERR_IMAGE;
+  const uint8_t* m = head + WPM_APP_MARKER_OFF;
+  if (std::memcmp(m, WPM_APP_MARKER_MAGIC, sizeof WPM_APP_MARKER_MAGIC) != 0) {
+    return WPM_OTA_ERR_IMAGE;
+  }
+  if (read_le32(m + 8) != WPM_APP_FLASH_BASE) return WPM_OTA_ERR_IMAGE;
+  if (len != 0 && read_le32(m + 12) != len) return WPM_OTA_ERR_IMAGE;
+  return WPM_OTA_OK;
 }
 
 const char* wpm_ota_last_result_str(uint8_t v) {
@@ -65,17 +74,19 @@ const char* wpm_ota_last_result_str(uint8_t v) {
       return "ok";
     case 2:
       return "crc_mismatch";
+    case 3:
+      return "image";
     default:
       return "none";
   }
 }
 
-WpmOtaCheck wpm_ota_commit_check(uint32_t len, const uint8_t first8[8], uint32_t crc_expected,
-                                 uint32_t crc_actual, bool busy) {
+WpmOtaCheck wpm_ota_commit_check(uint32_t len, const uint8_t head[WPM_OTA_HEAD_LEN],
+                                 uint32_t crc_expected, uint32_t crc_actual, bool busy) {
   if (busy) return WPM_OTA_ERR_BUSY;
   WpmOtaCheck c = wpm_ota_check_len(len);
   if (c != WPM_OTA_OK) return c;
-  c = wpm_ota_check_vectors(first8);
+  c = wpm_ota_check_head(head, len);
   if (c != WPM_OTA_OK) return c;
   return crc_expected == crc_actual ? WPM_OTA_OK : WPM_OTA_ERR_CRC;
 }

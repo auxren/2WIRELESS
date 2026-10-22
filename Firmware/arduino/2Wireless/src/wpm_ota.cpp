@@ -72,16 +72,12 @@ void wpm_ota_handle_commit(WiFiClient& client, const String& urlString) {
     haveCrc = true;
   }
 
-  // Order: busy, len, image, crc. The slow CRC pass runs only when the cheap
-  // checks pass, so the pure decision is made twice: once without the CRC
+  // Order: busy, len, image (head incl. marker), crc. The slow CRC pass runs only when the
+  // cheap checks pass, so the pure decision is made twice: once without the CRC
   // (crc_actual := crc_expected) and once with the computed value.
-  uint8_t first8[8] = {0};
-  WpmOtaCheck c = wpm_ota_commit_check(len, first8, crcExpected, crcExpected, wpm_ota_busy());
-  if (c == WPM_OTA_ERR_IMAGE && !wpm_ota_busy() && wpm_ota_check_len(len) == WPM_OTA_OK) {
-    // first8 was a placeholder; read the real image header and re-decide.
-    for (int i = 0; i < 8; i++) first8[i] = framRead(i);
-    c = wpm_ota_commit_check(len, first8, crcExpected, crcExpected, false);
-  }
+  uint8_t head[WPM_OTA_HEAD_LEN];
+  for (size_t i = 0; i < WPM_OTA_HEAD_LEN; i++) head[i] = framRead((int)i);
+  WpmOtaCheck c = wpm_ota_commit_check(len, head, crcExpected, crcExpected, wpm_ota_busy());
   if (c == WPM_OTA_OK) {
     uint32_t crc = 0xFFFFFFFFu;
     uint8_t buf[256];
@@ -93,7 +89,7 @@ void wpm_ota_handle_commit(WiFiClient& client, const String& urlString) {
     }
     uint32_t crcActual = crc ^ 0xFFFFFFFFu;
     if (!haveCrc) crcActual = ~crcExpected;  // a missing crc32= can never match
-    c = wpm_ota_commit_check(len, first8, crcExpected, crcActual, false);
+    c = wpm_ota_commit_check(len, head, crcExpected, crcActual, false);
   }
   if (c != WPM_OTA_OK) {
     wpm_send_json(client, wpm_json_err(wpm_ota_check_str(c)));

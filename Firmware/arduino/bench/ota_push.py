@@ -5,6 +5,10 @@ it with /readmemory and print the ready /ota/commit URL (never calls it).
 Usage: ota_push.py <file.ota.bin> [--base http://192.168.0.1] [--iface en1]
                    [--no-verify] [--dry-run]
 
+The image must carry the app marker build.sh stamps at 0x1C ("WPMAPP1\\0", base 0x6000,
+length == file length); a stock or full .ino.bin is refused before any network (also with
+--dry-run).
+
 Device facts encoded here: /writememory takes a JSON array of
 {"addr":"<hex>","data":"<hex>"}, Content-Type application/x-www-form-urlencoded,
 and answers 200 before parsing (only read-back proves a write); the tokenizer
@@ -133,6 +137,11 @@ def main():
         die("image length %d is odd" % len(data))
     if len(data) > MAX_IMAGE:
         die("image length %d exceeds 0x%X" % (len(data), MAX_IMAGE))
+    if (len(data) < 0x2C or data[0x1C:0x24] != b"WPMAPP1\0"
+            or int.from_bytes(data[0x24:0x28], "little") != 0x6000
+            or int.from_bytes(data[0x28:0x2C], "little") != len(data)):
+        die("not a WPM app image: no valid marker at 0x1C (stage only a build.sh "
+            "2Wireless.ota.bin; a stock or full .ino.bin is refused)")
     crc = "%08X" % (zlib.crc32(data) & 0xFFFFFFFF)
     print("image %s: %d bytes crc32 %s" % (a.file, len(data), crc))
 

@@ -9,6 +9,11 @@
 // record.flags is the retry counter: the application writes flags=0 whenever it
 // commits a new pending record; the loader increments it after each failed
 // flash verify and gives up (last_result=2, magic cleared) at WPM_LOADER_MAX_TRIES.
+// An app image carries a 16-byte marker at offset 0x1C (build.sh stamps it: "WPMAPP1\0",
+// link base 0x6000, image length). Before any erase the loader checks the staged len and the
+// FRAM head (vectors plus marker, marker length == record len); a failure clears the magic
+// with last_result=3 (image). last_result: 0 none, 1 ok, 2 crc_mismatch (staged CRC bad or
+// flash never verified), 3 image (len or head refused).
 // Only pins 4 (FRAM CS), 8/9/10 (SPI) and LED_BUILTIN are ever touched.
 #include <Arduino.h>
 #include <SPI.h>
@@ -33,11 +38,11 @@ static void write_record(const WpmOtaRecord& r) {
   fram_write(WPM_OTA_RECORD_ADDR, raw, WPM_OTA_RECORD_LEN);
 }
 
-// Clear the pending magic and report a failed stage (last_result = 2).
-static void reject(WpmOtaRecord& r) {
+// Clear the pending magic and report a failed stage (last_result 2 or 3).
+static void reject(WpmOtaRecord& r, uint8_t last_result) {
   r.pending = false;
   r.flags = 0;
-  r.last_result = 2;
+  r.last_result = last_result;
   write_record(r);
   fram_end();
   NVIC_SystemReset();
@@ -58,9 +63,9 @@ static void commit_success(WpmOtaRecord& r) {
 }
 
 static bool flash_app_ok() {
-  uint8_t v[8];
-  memcpy(v, (const void*)WPM_APP_FLASH_BASE, 8);
-  return wpm_ota_check_vectors(v) == WPM_OTA_OK;
+  uint8_t v[WPM_OTA_HEAD_LEN];
+  memcpy(v, (const void*)WPM_APP_FLASH_BASE, WPM_OTA_HEAD_LEN);
+  return wpm_ota_check_head(v, 0) == WPM_OTA_OK;
 }
 
 [[noreturn]] static void jump_to_app() {
@@ -137,9 +142,12 @@ static void do_copy(WpmOtaRecord& r) {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
 
-  if (r.flags >= WPM_LOADER_MAX_TRIES) reject(r);
-  if (wpm_ota_check_len(r.len) != WPM_OTA_OK) reject(r);
-  if (fram_image_crc(r.len) != r.crc32) reject(r);
+  if (r.flags >= WPM_LOADER_MAX_TRIES) reject(r, 2);
+  if (wpm_ota_check_len(r.len) != WPM_OTA_OK) reject(r, 3);
+  uint8_t head[WPM_OTA_HEAD_LEN];
+  fram_read(0, head, WPM_OTA_HEAD_LEN);
+  if (wpm_ota_check_head(head, r.len) != WPM_OTA_OK) reject(r, 3);
+  if (fram_image_crc(r.len) != r.crc32) reject(r, 2);
 
   NVMCTRL->CTRLB.bit.CACHEDIS = 1;  // verify reads must see the fresh flash
   copy_image(r);
