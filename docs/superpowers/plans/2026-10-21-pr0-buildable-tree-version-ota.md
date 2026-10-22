@@ -224,7 +224,9 @@ calls, §6 PR 0, §8 bench policy).
 - `wpm_loader_blob.h`: `extern const uint8_t wpm_loader_blob[0x4000] __attribute__((section(".sketch_boot")));`
   — `blob2c.py <bin> <out.cpp>` pads with 0xFF to 0x4000 and fails if the bin is larger.
 - Jump: `__disable_irq(); SysTick->CTRL = 0; SCB->VTOR = 0x6000; __set_MSP(*(uint32_t*)0x6000);
-  ((void(*)())(*(uint32_t*)0x6004))();`
+  NVIC->ICER[0] = 0xFFFFFFFF; NVIC->ICPR[0] = 0xFFFFFFFF; SCB->ICSR = SCB_ICSR_PENDSTCLR_Msk;
+  __enable_irq(); ((void(*)())(*(uint32_t*)0x6004))();` (interrupts MUST be re-enabled before the
+  branch: the SAMD core's startup never does it — review finding, 2026-10-22).
 
 - [ ] **Step 1: Write `FramLoader.ino`, `fram.h`, `nvm.h`** per Interfaces, using `WpmCommon` for
   CRC and record handling.
