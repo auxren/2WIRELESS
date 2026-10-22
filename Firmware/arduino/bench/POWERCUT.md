@@ -147,17 +147,17 @@ blinks 3 s and hands off again).
 
 | Step | Rep | Cut time (s after commit reply) | LED observed | last / app_crc32 / build | Pass/fail |
 |------|-----|---------------------------------|--------------|--------------------------|-----------|
-| 1 | 1 | 5 | | | |
-| 1 | 2 | 10 | | | |
-| 1 | 3 | 20 | | | |
-| 2 | 1 | 21 | | | |
-| 2 | 2 | 22 | | | |
-| 2 | 3 | 23 | | | |
+| 1 | 1 | unknown (owner cut "randomly", not synced to the LED) | not observed | ok / 0A53CC0E / b, reset_cause POR (12:28 commit of B) | PASS |
+| 1 | 2 | ~12 s after "go" (commit reply 12:32:43; copy window ~12:32:45-12:33:07): mid-copy | not observed (LED not located) | ok / 0A47FCE2 / a, POR, after power-on (the owner left the case off for 5 min first; no harm) | PASS |
+| 1 | 3 | ~18 s after "go" (commit reply 12:51:17): mid-copy | solid ~20 s after power-on, then off (full re-copy) | ok / 0A53CC0E / b, reset_cause SYST (the loader's own reset after the copy) | PASS |
+| 2 | 1 | ~24 s after "go" (commit reply 12:55:00): late in the copy | owner saw no LED after power-on; the device says it re-copied (SYST), so the LED was most likely missed | ok / 0A47FCE2 / a, reset_cause SYST (re-copied after power-on) | PASS |
+| 2 | 2 | ~28 s after "go" (commit reply 13:00:01): after the copy and record | LED never lit after power-on (direct jump) | ok / 0A53CC0E / b, reset_cause POR | PASS |
+| 2 | 3 | ~26 s after "go" (commit reply 13:04:05): after the copy and record | LED never lit after power-on (direct jump) | ok / 0A47FCE2 / a, reset_cause POR | PASS |
 | 3 | commit | n/a | app stayed up | byte at 0x1000 flipped, commit with the original CRC -> `{"ok":false,"error":"crc"}`; byte restored, read-back matches; status none / unknown / a (2026-10-22 12:10) | PASS |
-| 3 | hand record | power cycle | | | |
+| 3 | hand record | power cycle | on for under 1 s (reject before copy) | B staged, byte at 0x1000 flipped (38->C7), record OTA1/113900/0A53CC0E written by hand, pending:true; after the cycle: crc_mismatch / unknown / a, reset_cause SYST (13:12) | PASS |
 | 4 | len=0 / 1001 / 179482 | n/a | app stayed up | all three `{"ok":false,"error":"len"}` (2026-10-22 12:05; after the 09:20 bossac reset, not a power cycle) | PASS |
 | 4 | len=1000 image / DEADBEEF crc | n/a | app stayed up | len=1000 over the staged B -> `image` (marker length mismatch); len=113900 crc32=DEADBEEF -> `crc`; abort -> ok; status none / unknown / a | PASS |
 | 4 | stock head commit | n/a | app stayed up | `{"ok":false,"error":"image"}`; status none / unknown / a (2026-10-22 09:20, before Step 1, no reboot) | PASS |
-| 4 | stock record power cycle | power cycle | | | |
+| 4 | stock record power cycle | power cycle | none seen (reject within ms) | stock v1.18 head at FRAM 0, record OTA1/108612/0 written by hand, pending:true; after the cycle: image / unknown / a, reset_cause SYST (13:18); abort -> none | PASS |
 | 5 | brick (USB) | n/a | not watched (owner away); hand-off seen from the Mac | brick.ino.bin (bench-slow-a, app row 0 zeroed) flashed 12:16:11; from 12:16:17 the unit enumerated as "Arduino MKR1000" 0x2341:0x004E and stayed; HTTP never came up | PASS |
 | 5 | recovery | n/a | app up | flash.sh bench-slow-a found the bootloader port (no touch), verify OK; app answered on build a after a second join (wifi_rejoin timed out once at 162 s); status none; staged B marker intact | PASS |
