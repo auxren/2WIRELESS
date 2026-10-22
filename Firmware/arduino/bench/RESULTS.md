@@ -59,34 +59,39 @@ bank. The separate "re-flash stock v1.18 and capture" step is unnecessary: cap1 
 Note: the first POST of part 2 was closed by the WPM without a response when sent 0.5 s after part 1
 (the stock server is still consuming the previous body); 1.5 s spacing + retry fixed it.
 
-## Task 9 (pending bench): OTA round trip A -> B -> A
+## B2–B6 (Tasks 5–9 bench), 2026-10-22
 
-Status: tooling built and checked off-device only (formatter test, tagged build, `ota_push.py --dry-run`,
-and a loopback mock server). The device round trip has NOT been run; record results below when done.
+Device: USB data cable attached throughout (every flash ends in a bossac software reset, reset_cause SYST).
 
-Variant images (from `Firmware/arduino`; the 2Wireless build overwrites build/2Wireless each time):
+B2 first loader flash (loader build at a73c7bd, 130156 B): verify successful, app re-enumerated as the
+Studio H CDC device, AP up. HTTP refused on port 80 after my first join → root-caused with a WPM_DIAG
+build (bring-up log over USB CDC): shield=0 ap=7 (WL_AP_LISTENING) srv listening=1, i.e. the app was
+running and the driver believed the listener alive, yet TCP 80 was refused after one station
+re-association. The WINC1500 drops its AP-mode listening socket on (re)association; stock v1.18 masked
+it with server.begin() per WL_AP_CONNECTED transition, which bf047fa had reduced to one begin() in
+setup(). Fixed in a8b191e/7f0c14a (re-begin per association + idle 10 s refresh).
 
-    ./build.sh FramLoader
-    ./build.sh 2Wireless --profile wpm            && cp build/2Wireless/2Wireless.ota.bin build/variants/A.ota.bin
-    ./build.sh 2Wireless --profile wpm --tag b    && cp build/2Wireless/2Wireless.ota.bin build/variants/B.ota.bin
-    (flash variant A's full image first: rebuild untagged, then ./flash.sh build/2Wireless/2Wireless.ino.bin)
+B3 (build diag2 → a): Setup page shows "Firmware v1.19"; /ssid, /, /readmemory, /currentpreset
+unchanged. Churn: 5 join cycles → HTTP back after 6 s each (Mac association time); 30/30 polls over
+60 s with periodic refreshes running.
 
-Step 3, with variant A running and the Mac joined to the WPM AP (BUCHLA200E):
+B4 refusals: status {"pending":false,"last":"none","app_crc32":"unknown"}; commit len=0 → len; len=1001
+→ len; len=179482 → len; len=1000 over the preset bank → image; staged valid image + crc32=DEADBEEF →
+crc; abort → ok; after abort last:"none". busy not reachable (no background job).
 
-    cd Firmware/arduino/bench
-    ./wpm.sh get version                              # expect no "build" key
-    python3 ./ota_push.py ../build/variants/B.ota.bin # prints size, CRC32, push + verify times, commit URL
-    ./wpm.sh get 'ota/commit?len=<N>&crc32=<HEX>'     # URL printed by ota_push.py; note reply time -> {"ok":true,...}
-    ./wifi_rejoin.sh                                  # 60 s wait, one join, poll up to 90 s; note elapsed
-    ./wpm.sh get version                              # expect "build":"b", app_crc32 = pushed CRC
-    ./wpm.sh get ota/status                           # expect last:"ok"
-    # then back to A the same way:
-    python3 ./ota_push.py ../build/variants/A.ota.bin
-    ./wpm.sh get 'ota/commit?len=<N>&crc32=<HEX>'
-    ./wifi_rejoin.sh
-    ./wpm.sh get version                              # no "build" key again
-    ./wpm.sh get ota/status
+B5 software-reset bring-up with USB attached: 6 flash resets today (loader build, diag, diag2, a ×3),
+AP up every time; HTTP within 0–1 s of the first poll once the Mac had rejoined (the Mac roams to the
+home LAN while the AP restarts, so one join is still needed).
 
-Record per phase: push time, verify time, copy time (commit reply -> HTTP returns), total rejoin seconds.
+B6 OTA round trip (variants built from 7f0c14a: a = 661CCA5F, b = 57429505, 113,868 B each):
+    A → B: push 46.6 s (19 POSTs of 6080 B), verify 18.8 s, commit reply 2 s, app up ≈ 2 s after the
+           commit (uptime 74 s when read 76 s later), wifi_rejoin 66 s (60 s fixed wait), /version
+           build "b" app_crc32 57429505, /ota/status last "ok".
+    B → A: push 47.2 s, verify 18.7 s, commit reply 2 s, rejoin 67 s, build "a" app_crc32 661CCA5F,
+           last "ok"; /ota/abort → ok, status last "none" app_crc32 "unknown"; /currentpreset answers.
+First A → B attempt (before 7f0c14a) failed at the read-back with "Connection refused": the 10 s
+listener refresh hit the back-to-back reads; now refreshed only when idle, and ota_push retries.
 
-Off-device sizes (this commit): A ota 113764 bytes crc32 AC731C94; B (--tag b) ota 113772 bytes crc32 7FB989E5.
+Bench hazard: a process holding the CDC port with DTR asserted defeats the 1200-baud touch (the
+firmware resets only on 1200 baud with DTR dropped); flash.sh then reports "bootloader port did not
+appear within 10 s" and nothing is erased. Close serial readers before flashing.
