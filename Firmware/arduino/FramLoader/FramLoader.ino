@@ -6,6 +6,9 @@
 // the staged image CRC, copy it row by row to flash from 0x6000, verify the
 // flash CRC, record the result and reset. Otherwise jump to the application,
 // or blink the LED at 5 Hz if the application vectors are not plausible.
+// record.flags is the retry counter: the application writes flags=0 whenever it
+// commits a new pending record; the loader increments it after each failed
+// flash verify and gives up (last_result=2, magic cleared) at WPM_LOADER_MAX_TRIES.
 // Only pins 4 (FRAM CS), 8/9/10 (SPI) and LED_BUILTIN are ever touched.
 #include <Arduino.h>
 #include <SPI.h>
@@ -16,6 +19,8 @@
 #include "fram.h"
 #include "nvm.h"
 
+#define WPM_LOADER_MAX_TRIES 3
+
 static void write_record(const WpmOtaRecord& r) {
   uint8_t raw[WPM_OTA_RECORD_LEN];
   wpm_ota_record_serialize(&r, raw);
@@ -25,10 +30,25 @@ static void write_record(const WpmOtaRecord& r) {
 // Clear the pending magic and report a failed stage (last_result = 2).
 static void reject(WpmOtaRecord& r) {
   r.pending = false;
+  r.flags = 0;
   r.last_result = 2;
   write_record(r);
   fram_end();
   NVIC_SystemReset();
+}
+
+// Success: write fields 4..17 first (magic still intact), then zero the magic
+// in a second write, so a power cut never leaves a cleared magic with stale fields
+// nor a half-written record that looks complete.
+static void commit_success(WpmOtaRecord& r) {
+  uint8_t raw[WPM_OTA_RECORD_LEN];
+  r.flags = 0;
+  r.last_result = 1;
+  r.pending = true;  // serialize with the magic, write all but the magic first
+  wpm_ota_record_serialize(&r, raw);
+  fram_write(WPM_OTA_RECORD_ADDR + 4, raw + 4, WPM_OTA_RECORD_LEN - 4);
+  const uint8_t zero[4] = {0, 0, 0, 0};
+  fram_write(WPM_OTA_RECORD_ADDR, zero, 4);
 }
 
 static bool flash_app_ok() {
@@ -45,6 +65,12 @@ static bool flash_app_ok() {
   SysTick->CTRL = 0;
   SCB->VTOR = WPM_APP_FLASH_BASE;
   __set_MSP(*(volatile uint32_t*)WPM_APP_FLASH_BASE);
+  // The app's startup never re-enables interrupts (PRIMASK stays as we leave it),
+  // so clear all pending state first, then enable, then branch.
+  NVIC->ICER[0] = 0xFFFFFFFF;
+  NVIC->ICPR[0] = 0xFFFFFFFF;
+  SCB->ICSR = SCB_ICSR_PENDSTCLR_Msk;
+  __enable_irq();
   ((void (*)(void))(*(volatile uint32_t*)(WPM_APP_FLASH_BASE + 4)))();
   for (;;) {
   }
@@ -90,6 +116,7 @@ static void do_copy(WpmOtaRecord& r) {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
 
+  if (r.flags >= WPM_LOADER_MAX_TRIES) reject(r);
   if (wpm_ota_check_len(r.len) != WPM_OTA_OK) reject(r);
   if (fram_image_crc(r.len) != r.crc32) reject(r);
 
@@ -98,12 +125,13 @@ static void do_copy(WpmOtaRecord& r) {
 
   uint32_t crc = wpm_crc32((const uint8_t*)WPM_APP_FLASH_BASE, r.len);
   if (crc == r.crc32) {
-    r.pending = false;
-    r.last_result = 1;
     r.app_crc32 = crc;
+    commit_success(r);
+  } else {
+    // Magic stays so the copy re-runs on the next boot, at most MAX_TRIES times.
+    r.flags++;
     write_record(r);
   }
-  // On mismatch the magic stays, so the copy re-runs on the next boot.
   fram_end();
   NVIC_SystemReset();
 }
