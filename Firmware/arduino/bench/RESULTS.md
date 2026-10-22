@@ -95,3 +95,17 @@ listener refresh hit the back-to-back reads; now refreshed only when idle, and o
 Bench hazard: a process holding the CDC port with DTR asserted defeats the 1200-baud touch (the
 firmware resets only on 1200 baud with DTR dropped); flash.sh then reports "bootloader port did not
 appear within 10 s" and nothing is erased. Close serial readers before flashing.
+
+## Task 12: release binaries, checked from the committed files (2026-10-22 13:24-13:33)
+
+`bin/2Wireless-1.19.ino.bin` (130276 B, crc32 27DF365F) and `bin/2Wireless-1.19.ota.bin` (113892 B, crc32 27D00D24) are the untagged `build.sh 2Wireless --profile wpm` outputs with the committed production loader (8192 B, crc32 FCF09B1B); byte-identical to the pair used for the POWERCUT Step 6 round trip. `bin/SHA256SUMS` covers both plus the shipped v1.18 image.
+
+Flashed `bin/2Wireless-1.19.ino.bin` over USB (bossac-20261022-132451.log), then from the committed files:
+
+- `/version`: version 1.19, loader fram-loader-1, capabilities [version, ota]; `/setup` shows "Firmware v1.19"; `/currentpreset` {"currentpreset": "1"}; `/ssid` {"ssid": "BUCHLA200E"}; `/getpresets?addr=76` returns `"data": ""` (Task 1 Step 5 / Task 6 Step 8).
+- USB: enumerates as "Studio H Software" / "Studio H Software USB Midi".
+- Association churn: five re-joins, `/currentpreset` answered after every one (5/5).
+- 259e (0x28) capture on the release build is byte-identical to cap1, the capture taken on stock v1.18 (1069 bytes). No /setpresets issued (a raw round trip shifts a bank by design; see the Task 2 post-analysis), so this is the WireByte equivalence check without touching the module.
+- OTA round trip from the committed images: release -> variant b (push 47.6 s, verify 20.7 s, commit 13:29:11, reply 2 s, `last:"ok"`, app_crc32 0A53CC0E, build b) -> `bin/2Wireless-1.19.ota.bin` (push 47.0 s, verify 20.4 s, commit 13:31:49, `last:"ok"`, app_crc32 27D00D24, no build tag). App answered at the first poll after each rejoin.
+
+Final device state: `bin/2Wireless-1.19` running, installed by its own loader over the air; 259e bank equal to cap1.
