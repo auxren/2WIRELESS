@@ -71,10 +71,14 @@ How it works: the image is `build/2Wireless/2Wireless.ota.bin`. Stage it in FRAM
 Staging overwrites the preset transfer buffer but never the stored settings. The commit writes a pending
 record to FRAM `0x02BE50` (18 bytes, magic "OTA1", inside the range 0x02BE4D-0x02BE7F that is
 reserved for new state) and resets the WPM. On the next boot the loader at 0x2000 sees the record,
-checks `len` and the staged head (vectors plus app marker), checks CRC32 over FRAM `[0..len)`, erases and writes flash from 0x6000 in 256-byte rows, verifies the
-flash CRC, clears the magic, records the result and jumps to the app. A bad CRC (`last_result` 2) or a refused len/head (3, `image`) clears the magic and
-boots the existing app. The loader never erases itself, so a power cut re-runs the copy on the next boot;
-if the flash verify fails, the copy is retried at most 3 times. If flash holds no plausible app (the
+checks `len` and the staged head (vectors plus app marker), checks CRC32 over FRAM `[0..len)`, erases and writes flash from 0x6000 in 256-byte rows
+(row 0, the vectors and the marker, is erased first and written last, so flash never looks like a
+plausible app while a copy is incomplete), verifies the flash CRC, clears the magic, records the result
+and jumps to the app. A bad CRC (`last_result` 2) or a refused len/head (3, `image`) is detected before
+any erase: it clears the magic and boots the existing app. The loader never erases itself, so a power
+cut re-runs the copy on the next boot; if the flash verify fails, row 0 is erased again and the copy is
+retried at most 3 times, after which the magic is cleared and the next boot takes the hand-off path
+below (never a jump into an unverified image). If flash holds no plausible app (the
 head check fails: vectors or marker), the loader blinks the LED at 5 Hz for 3 s and then hands the unit to the SAM-BA
 bootloader (double-tap magic + reset), so the "Arduino MKR1000" USB port appears and one `flash.sh`
 upload recovers it without reaching the reset button; each power-up repeats the blink and hand-off.
@@ -197,7 +201,9 @@ round trip). In order:
 - **Six timed power cuts (Steps 1-2).** All six passed: the new app ran and `last` was "ok". Two landed
   mid-copy (the loader re-copied from row 0 on the next boot, LED solid ~20 s after power-on with the 50 ms
   bench loader, reset cause SYST); three landed after the record was committed (direct jump, reset cause
-  POR); one was unsynced.
+  POR); one was unsynced. Those six ran on the loader before the row-order fix; the fixed loader was
+  re-benched with two early mid-copy cuts (~5 s and ~10 s into the copy, both re-copied on the next
+  boot), a round trip and the brick drill (POWERCUT.md, "Re-bench after the row-order fix").
   The bench loader copies at 50 ms per row (~22 s for 445 rows); the production loader takes about 1 s.
 - **Hand-written records (Steps 3 and 4).** A record naming a staged image with a flipped byte gave
   `last` "crc_mismatch"; a record naming the stock v1.18 head gave `last` "image". Both were rejected

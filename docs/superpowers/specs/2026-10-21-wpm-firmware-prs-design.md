@@ -155,8 +155,10 @@ Decided with the app session: route shapes in §6. The rest are the builder-side
   writes the whole bin). `app_crc32` covers flash `0x6000 .. 0x6000+len`.
 - **(call) Pending-OTA record** at FRAM `0x02BE50`: `magic "OTA1"(4) len(4 LE) crc32(4 LE) flags(1)
   last_result(1) app_crc32(4)`; the loader verifies CRC32 (zlib polynomial, as `Buchla200eCrc32`) over
-  FRAM `[0..len)`, erases/writes flash from **0x6000** in 256-byte rows, verifies the flash CRC, clears
-  the magic, sets `last_result`, jumps. Non-matching CRC → clears the magic, sets
+  FRAM `[0..len)`, erases/writes flash from **0x6000** in 256-byte rows (row 0, vectors and marker,
+  erased first and written last; a failed flash verify erases row 0 again before the retry, so an
+  unverified image is never jumped into and retry exhaustion ends in the hand-off below), verifies the
+  flash CRC, clears the magic, sets `last_result`, jumps. Non-matching CRC → clears the magic, sets
   `last_result = crc_mismatch` (2), boots the existing app. Before any erase the loader also checks
   `len` and the staged head (below); a failure clears the magic, sets `last_result = image` (3) and
   boots the existing app. No plausible app in flash (head fails the check below) → the loader blinks the LED at 5 Hz for 3 s, then writes the SAM-BA double-tap

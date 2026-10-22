@@ -98,7 +98,9 @@ Oren's WPM in its 200e case on 2026-10-22; tables are in
 - **Six timed power cuts (Steps 1-2).** All six passed: the new app ran and `last` was "ok". Two landed
   mid-copy (the loader re-copied from row 0 on the next boot, LED solid ~20 s after power-on with the 50 ms
   bench loader, reset cause SYST); three landed after the record was committed (direct jump, reset cause
-  POR); one was unsynced.
+  POR); one was unsynced. Those six ran on the loader before the row-order fix; the fixed loader was
+  re-benched with two early mid-copy cuts (~5 s and ~10 s into the copy, both re-copied on the next
+  boot), a round trip and the brick drill (POWERCUT.md, "Re-bench after the row-order fix").
   The bench loader copies at 50 ms per row (~22 s for 445 rows); the production loader takes about 1 s.
 - **Hand-written records (Steps 3 and 4).** A record naming a staged image with a flipped byte gave
   `last` "crc_mismatch"; a record naming the stock v1.18 head gave `last` "image". Both were rejected
@@ -127,6 +129,11 @@ Not covered by the bench / still true:
   XOSC32K/DFLL start-up, and the app then restarts them; B6 suggests a small overhead. Measure
   POR-to-first-I2C-ACK before relying on it, or build the loader CRYSTALLESS.
 - `/version` can take up to ~1 s, because `WiFi.RSSI()` waits for a callback in AP mode.
+- Residual loader window, two independent faults needed: a power cut inside row 0's four page writes
+  (or between row 0 and the flash verify, tens of ms) followed by a misread of the FRAM record's magic
+  on the next boot could jump into an image that was written but never CRC-verified. With the magic read
+  correctly the copy simply re-runs. Writing row 0's pages in reverse order would narrow it further; not
+  done in PR 0 (the loader bytes were frozen after the re-bench).
 
 ## How to reproduce
 
