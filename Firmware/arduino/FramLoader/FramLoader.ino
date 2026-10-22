@@ -3,9 +3,11 @@
 // 0x2000..0x5FFF; the application proper starts at 0x6000.
 //
 // Boot: read the 18-byte OTA record from FRAM. If an update is pending, verify
-// the staged image CRC, copy it row by row to flash from 0x6000, verify the
-// flash CRC, record the result and reset. Otherwise jump to the application, or, if the
-// application vectors are not plausible, blink the LED at 5 Hz for 3 s and enter SAM-BA.
+// the staged image CRC, copy it row by row to flash from 0x6000 (row 0, the vectors and the
+// marker, erased first and written last), verify the flash CRC, record the result and reset.
+// Otherwise jump to the application, or, if the application head is not plausible, blink the
+// LED at 5 Hz for 3 s and enter SAM-BA. A copy that never verified therefore always ends in
+// the blink + hand-off, never in a jump into a half-written image.
 // record.flags is the retry counter: the application writes flags=0 whenever it
 // commits a new pending record; the loader increments it after each failed
 // flash verify and gives up (last_result=2, magic cleared) at WPM_LOADER_MAX_TRIES.
@@ -14,7 +16,8 @@
 // FRAM head (vectors plus marker, marker length == record len); a failure clears the magic
 // with last_result=3 (image). last_result: 0 none, 1 ok, 2 crc_mismatch (staged CRC bad or
 // flash never verified), 3 image (len or head refused).
-// Only pins 4 (FRAM CS), 8/9/10 (SPI) and LED_BUILTIN are ever touched.
+// Beyond the core's init() (which sets every pin to INPUT, as the app's own init() does), only
+// pins 4 (FRAM CS), 8/9/10 (SPI) and LED_BUILTIN are driven.
 #include <Arduino.h>
 #include <SPI.h>
 #include <wpm_crc32.h>
@@ -124,18 +127,27 @@ static uint32_t fram_image_crc(uint32_t len) {
   return crc ^ 0xFFFFFFFFu;
 }
 
-static void copy_image(WpmOtaRecord& r) {
+// Erase and write one 256-byte row of the image (the last row is padded with 0xFF).
+static void copy_row(uint32_t off, uint32_t len) {
   uint8_t buf[NVM_ROW_SIZE];
-  for (uint32_t off = 0; off < r.len; off += NVM_ROW_SIZE) {
-    uint32_t n = r.len - off < NVM_ROW_SIZE ? r.len - off : NVM_ROW_SIZE;
-    fram_read(off, buf, n);
-    for (uint32_t i = n; i < NVM_ROW_SIZE; i++) buf[i] = 0xFF;  // pad last row
-    nvm_erase_row(WPM_APP_FLASH_BASE + off);
-    for (uint32_t p = 0; p < NVM_ROW_SIZE; p += NVM_PAGE_SIZE) {
-      nvm_write_page(WPM_APP_FLASH_BASE + off + p, buf + p);
-    }
-    if (LOADER_SLOW_COPY_MS) delay(LOADER_SLOW_COPY_MS);
+  uint32_t n = len - off < NVM_ROW_SIZE ? len - off : NVM_ROW_SIZE;
+  fram_read(off, buf, n);
+  for (uint32_t i = n; i < NVM_ROW_SIZE; i++) buf[i] = 0xFF;
+  nvm_erase_row(WPM_APP_FLASH_BASE + off);
+  for (uint32_t p = 0; p < NVM_ROW_SIZE; p += NVM_PAGE_SIZE) {
+    nvm_write_page(WPM_APP_FLASH_BASE + off + p, buf + p);
   }
+  if (LOADER_SLOW_COPY_MS) delay(LOADER_SLOW_COPY_MS);
+}
+
+// Row 0 holds the vectors and the marker: erase it first and write it last, so flash never
+// looks like a plausible app while the copy is incomplete. If the magic is lost at any point
+// in between (retries exhausted, record or FRAM misread after a power cut), the next boot
+// blinks and hands off to SAM-BA instead of jumping into a half-written image.
+static void copy_image(WpmOtaRecord& r) {
+  nvm_erase_row(WPM_APP_FLASH_BASE);
+  for (uint32_t off = NVM_ROW_SIZE; off < r.len; off += NVM_ROW_SIZE) copy_row(off, r.len);
+  copy_row(0, r.len);
 }
 
 static void do_copy(WpmOtaRecord& r) {
@@ -157,7 +169,10 @@ static void do_copy(WpmOtaRecord& r) {
     r.app_crc32 = crc;
     commit_success(r);
   } else {
-    // Magic stays so the copy re-runs on the next boot, at most MAX_TRIES times.
+    // Magic stays so the copy re-runs on the next boot, at most MAX_TRIES times. Row 0 is
+    // erased again first: an unverified image must never be jumped into, even if the magic
+    // is cleared later (retries exhausted) or misread.
+    nvm_erase_row(WPM_APP_FLASH_BASE);
     r.flags++;
     write_record(r);
   }

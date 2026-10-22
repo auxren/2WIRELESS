@@ -148,7 +148,7 @@ blinks 3 s and hands off again).
 | Step | Rep | Cut time (s after commit reply) | LED observed | last / app_crc32 / build | Pass/fail |
 |------|-----|---------------------------------|--------------|--------------------------|-----------|
 | 1 | 1 | unknown (owner cut "randomly", not synced to the LED) | not observed | ok / 0A53CC0E / b, reset_cause POR (12:28 commit of B) | PASS |
-| 1 | 2 | ~12 s after "go" (commit reply 12:32:43; copy window ~12:32:45-12:33:07): mid-copy | not observed (LED not located) | ok / 0A47FCE2 / a, POR, after power-on (the owner left the case off for 5 min first; no harm) | PASS |
+| 1 | 2 | owner counted ~12 s from his "go", but the commit reply was 12:32:43 and the result says the copy was already complete: a re-copy ends in the loader's own reset (SYST) and this boot reports POR | not observed (LED not located) | ok / 0A47FCE2 / a, POR, after power-on (the owner left the case off for 5 min first; no harm). Counted as a post-commit cut, not mid-copy | PASS |
 | 1 | 3 | ~18 s after "go" (commit reply 12:51:17): mid-copy | solid ~20 s after power-on, then off (full re-copy) | ok / 0A53CC0E / b, reset_cause SYST (the loader's own reset after the copy) | PASS |
 | 2 | 1 | ~24 s after "go" (commit reply 12:55:00): late in the copy | owner saw no LED after power-on; the device says it re-copied (SYST), so the LED was most likely missed | ok / 0A47FCE2 / a, reset_cause SYST (re-copied after power-on) | PASS |
 | 2 | 2 | ~28 s after "go" (commit reply 13:00:01): after the copy and record | LED never lit after power-on (direct jump) | ok / 0A53CC0E / b, reset_cause POR | PASS |
