@@ -1,6 +1,6 @@
 #!/bin/bash
 # Reproducible arduino-cli build for the WPM firmware.
-# Usage: build.sh [2Wireless|FramLoader] [--profile wpm|wpm_loader|mkr1000] [--verbose] [--tag <t>]
+# Usage: build.sh [2Wireless|FramLoader] [--profile wpm|wpm_loader|mkr1000] [--verbose] [--tag <t>] [--slow <ms>]
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -8,15 +8,22 @@ SKETCH="2Wireless"
 PROFILE=""
 VERBOSE=""
 TAG=""
+SLOW=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile) PROFILE="$2"; shift 2 ;;
     --verbose) VERBOSE="-v"; shift ;;
     --tag) TAG="$2"; shift 2 ;;
+    --slow) SLOW="$2"; shift 2 ;;
     2Wireless|FramLoader) SKETCH="$1"; shift ;;
-    *) echo "usage: $0 [2Wireless|FramLoader] [--profile wpm|wpm_loader|mkr1000] [--verbose] [--tag <t>]" >&2; exit 2 ;;
+    *) echo "usage: $0 [2Wireless|FramLoader] [--profile wpm|wpm_loader|mkr1000] [--verbose] [--tag <t>] [--slow <ms>]" >&2; exit 2 ;;
   esac
 done
+
+if [ -n "$SLOW" ]; then
+  [ "$SKETCH" = "FramLoader" ] || { echo "error: --slow applies only to the FramLoader sketch" >&2; exit 2; }
+  case "$SLOW" in ''|*[!0-9]*) echo "error: --slow must be a number of milliseconds" >&2; exit 2 ;; esac
+fi
 
 if [ -z "$PROFILE" ]; then
   if [ "$SKETCH" = "FramLoader" ]; then PROFILE="wpm_loader"; else PROFILE="wpm"; fi
@@ -37,16 +44,21 @@ cp "$HERE/boards.local.txt" "$CORE_DIR/boards.local.txt"
 
 # --tag t: define FW_BUILD_TAG="t" (reported as "build" by /version). The
 # property override replaces build.extra_flags, so re-read the profile's own.
+# --slow ms (FramLoader only): define LOADER_SLOW_COPY_MS=ms, a per-row delay for power-cut
+# benches. Same override mechanism as --tag, so both may be combined.
+EXTRA=""
+[ -n "$TAG" ] && EXTRA="$EXTRA -DFW_BUILD_TAG=\"$TAG\""
+[ -n "$SLOW" ] && EXTRA="$EXTRA -DLOADER_SLOW_COPY_MS=$SLOW"
 TAG_ARGS=()
-if [ -n "$TAG" ]; then
-  case "$TAG" in *[!A-Za-z0-9._-]*) echo "error: --tag must match [A-Za-z0-9._-]+" >&2; exit 2 ;; esac
+if [ -n "$TAG" ] || [ -n "$SLOW" ]; then
+  [ -z "$TAG" ] || case "$TAG" in *[!A-Za-z0-9._-]*) echo "error: --tag must match [A-Za-z0-9._-]+" >&2; exit 2 ;; esac
   BASE_FLAGS=""
   for f in "$HERE/boards.local.txt" "$CORE_DIR/boards.txt"; do
     BASE_FLAGS="$(sed -n "s/^${PROFILE}\.build\.extra_flags=//p" "$f" | head -n1)"
     [ -n "$BASE_FLAGS" ] && break
   done
   [ -n "$BASE_FLAGS" ] || { echo "error: no build.extra_flags for profile $PROFILE" >&2; exit 2; }
-  TAG_ARGS=(--build-property "build.extra_flags=$BASE_FLAGS -DFW_BUILD_TAG=\"$TAG\"")
+  TAG_ARGS=(--build-property "build.extra_flags=$BASE_FLAGS$EXTRA")
 fi
 
 OUT="$HERE/build/$SKETCH"
@@ -59,6 +71,13 @@ python3 -c 'import sys,zlib;d=open(sys.argv[1],"rb").read();print("size %d crc32
 if [ "$SKETCH" = "FramLoader" ]; then
   # The loader must fit the 0x4000-byte .sketch_boot slot; embed it in the app.
   python3 "$HERE/tools/blob2c.py" "$BIN" "$HERE/2Wireless/src/wpm_loader_blob.cpp"
+  if [ -n "$SLOW" ]; then
+    echo "################################################################" >&2
+    echo "WARNING: SLOW BENCH LOADER (LOADER_SLOW_COPY_MS=$SLOW)." >&2
+    echo "2Wireless/src/wpm_loader_blob.cpp now holds a bench artefact. NEVER commit it:" >&2
+    echo "rebuild with 'build.sh FramLoader' (no --slow) before committing." >&2
+    echo "################################################################" >&2
+  fi
 fi
 
 if [ "$SKETCH" = "2Wireless" ] && [ "$PROFILE" = "wpm" ]; then
@@ -84,6 +103,7 @@ ota = d[0x4000:]
 if len(ota) % 2 or len(ota) > 0x2BD18:
     sys.exit("error: OTA image length %d must be even and <= 0x2BD18" % len(ota))
 open(sys.argv[2], "wb").write(ota)
+print("embedded loader: %d bytes crc32 %08X (blob padded to 0x4000)" % (len(ldr), zlib.crc32(ldr) & 0xffffffff))
 print("vectors ok: loader sp=%08X reset=%08X, app sp=%08X reset=%08X" % (sp, rst, asp, arst))
 print("ota size %d crc32 %08X -> %s" % (len(ota), zlib.crc32(ota) & 0xffffffff, sys.argv[2]))
 PYEOF

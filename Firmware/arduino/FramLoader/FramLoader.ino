@@ -21,6 +21,12 @@
 
 #define WPM_LOADER_MAX_TRIES 3
 
+// Bench only (build.sh FramLoader --slow <ms>): pause after each 256-byte row so a
+// power cut can be timed mid-copy. Production builds leave this 0 and compile it out.
+#ifndef LOADER_SLOW_COPY_MS
+#define LOADER_SLOW_COPY_MS 0
+#endif
+
 static void write_record(const WpmOtaRecord& r) {
   uint8_t raw[WPM_OTA_RECORD_LEN];
   wpm_ota_record_serialize(&r, raw);
@@ -109,6 +115,7 @@ static void copy_image(WpmOtaRecord& r) {
     for (uint32_t p = 0; p < NVM_ROW_SIZE; p += NVM_PAGE_SIZE) {
       nvm_write_page(WPM_APP_FLASH_BASE + off + p, buf + p);
     }
+    if (LOADER_SLOW_COPY_MS) delay(LOADER_SLOW_COPY_MS);
   }
 }
 
