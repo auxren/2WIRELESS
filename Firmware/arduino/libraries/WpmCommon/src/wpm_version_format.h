@@ -15,6 +15,7 @@ struct WpmVersionInfo {
   uint8_t pollOnStart;
   bool has_app_crc;         // false: "app_crc32":"unknown"
   uint32_t app_crc32;
+  const char* build;        // nullptr/"" = no build tag: "build" key omitted
 };
 
 // Writes the JSON into out (NUL-terminated, truncated to cap-1 chars). Returns

@@ -1,18 +1,20 @@
 #!/bin/bash
 # Reproducible arduino-cli build for the WPM firmware.
-# Usage: build.sh [2Wireless|FramLoader] [--profile wpm|wpm_loader|mkr1000] [--verbose]
+# Usage: build.sh [2Wireless|FramLoader] [--profile wpm|wpm_loader|mkr1000] [--verbose] [--tag <t>]
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SKETCH="2Wireless"
 PROFILE=""
 VERBOSE=""
+TAG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile) PROFILE="$2"; shift 2 ;;
     --verbose) VERBOSE="-v"; shift ;;
+    --tag) TAG="$2"; shift 2 ;;
     2Wireless|FramLoader) SKETCH="$1"; shift ;;
-    *) echo "usage: $0 [2Wireless|FramLoader] [--profile wpm|wpm_loader|mkr1000] [--verbose]" >&2; exit 2 ;;
+    *) echo "usage: $0 [2Wireless|FramLoader] [--profile wpm|wpm_loader|mkr1000] [--verbose] [--tag <t>]" >&2; exit 2 ;;
   esac
 done
 
@@ -33,9 +35,23 @@ arduino-cli lib install "$WIFI101"
 CORE_DIR="$(arduino-cli config get directories.data)/packages/arduino/hardware/samd/${CORE_VER}"
 cp "$HERE/boards.local.txt" "$CORE_DIR/boards.local.txt"
 
+# --tag t: define FW_BUILD_TAG="t" (reported as "build" by /version). The
+# property override replaces build.extra_flags, so re-read the profile's own.
+TAG_ARGS=()
+if [ -n "$TAG" ]; then
+  case "$TAG" in *[!A-Za-z0-9._-]*) echo "error: --tag must match [A-Za-z0-9._-]+" >&2; exit 2 ;; esac
+  BASE_FLAGS=""
+  for f in "$HERE/boards.local.txt" "$CORE_DIR/boards.txt"; do
+    BASE_FLAGS="$(sed -n "s/^${PROFILE}\.build\.extra_flags=//p" "$f" | head -n1)"
+    [ -n "$BASE_FLAGS" ] && break
+  done
+  [ -n "$BASE_FLAGS" ] || { echo "error: no build.extra_flags for profile $PROFILE" >&2; exit 2; }
+  TAG_ARGS=(--build-property "build.extra_flags=$BASE_FLAGS -DFW_BUILD_TAG=\"$TAG\"")
+fi
+
 OUT="$HERE/build/$SKETCH"
 arduino-cli compile --fqbn "arduino:samd:$PROFILE" --libraries "$HERE/libraries" \
-  $VERBOSE --output-dir "$OUT" --warnings default "$HERE/$SKETCH"
+  ${TAG_ARGS[@]+"${TAG_ARGS[@]}"} $VERBOSE --output-dir "$OUT" --warnings default "$HERE/$SKETCH"
 
 BIN="$OUT/$SKETCH.ino.bin"
 python3 -c 'import sys,zlib;d=open(sys.argv[1],"rb").read();print("size %d crc32 %08X"%(len(d),zlib.crc32(d)&0xffffffff))' "$BIN"

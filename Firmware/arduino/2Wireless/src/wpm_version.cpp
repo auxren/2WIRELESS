@@ -48,8 +48,13 @@ String wpm_version_json(bool loaderPresent, uint8_t usbMode, uint8_t pollOnStart
   info.pollOnStart = pollOnStart;
   info.has_app_crc = (rec.last_result == 1);
   info.app_crc32 = rec.app_crc32;
+#ifdef FW_BUILD_TAG
+  info.build = FW_BUILD_TAG;
+#else
+  info.build = nullptr;
+#endif
 
-  char buf[320];
+  char buf[352];
   wpm_version_format(buf, sizeof buf, info);
   return String(buf);
 }

@@ -8,7 +8,7 @@
 int main() {
   // Full fixture: loader present, app crc known.
   {
-    WpmVersionInfo info = {"1.19", "mkr1000", "fram-loader-1", "POR", 42u, -50, 1, 0, true, 0x0A1B2C3Du};
+    WpmVersionInfo info = {"1.19", "mkr1000", "fram-loader-1", "POR", 42u, -50, 1, 0, true, 0x0A1B2C3Du, nullptr};
     const char* want =
         "{\"version\":\"1.19\",\"board\":\"mkr1000\",\"loader\":\"fram-loader-1\","
         "\"capabilities\":[\"version\",\"ota\"],\"getpresets_wait\":false,\"usbMode\":1,"
@@ -29,7 +29,7 @@ int main() {
 
   // No loader, unknown app crc: loader key absent, "unknown" crc.
   {
-    WpmVersionInfo info = {"1.19", "mkr1000", nullptr, "WDT", 4000000000u, 0, 0, 1, false, 0xFFFFFFFFu};
+    WpmVersionInfo info = {"1.19", "mkr1000", nullptr, "WDT", 4000000000u, 0, 0, 1, false, 0xFFFFFFFFu, nullptr};
     const char* want =
         "{\"version\":\"1.19\",\"board\":\"mkr1000\","
         "\"capabilities\":[\"version\",\"ota\"],\"getpresets_wait\":false,\"usbMode\":0,"
@@ -38,6 +38,21 @@ int main() {
     char buf[512];
     wpm_version_format(buf, sizeof buf, info);
     CHECK(std::strcmp(buf, want) == 0);
+  }
+  // Tagged build: "build" key right after "version"; empty tag is omitted.
+  {
+    WpmVersionInfo info = {"1.19", "mkr1000", "fram-loader-1", "POR", 42u, -50, 1, 0, true, 0x0A1B2C3Du, "b"};
+    const char* want =
+        "{\"version\":\"1.19\",\"build\":\"b\",\"board\":\"mkr1000\",\"loader\":\"fram-loader-1\","
+        "\"capabilities\":[\"version\",\"ota\"],\"getpresets_wait\":false,\"usbMode\":1,"
+        "\"pollOnStart\":0,\"reset_cause\":\"POR\",\"uptime_s\":42,\"rssi\":-50,"
+        "\"tcp_sockets_free\":null,\"app_crc32\":\"0A1B2C3D\"}";
+    char buf[512];
+    wpm_version_format(buf, sizeof buf, info);
+    CHECK(std::strcmp(buf, want) == 0);
+    info.build = "";
+    wpm_version_format(buf, sizeof buf, info);
+    CHECK(std::strstr(buf, "\"build\"") == nullptr);
   }
   std::printf("test_version_json: %d failures\n", minitest_failures);
   return minitest_failures;

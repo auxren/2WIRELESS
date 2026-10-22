@@ -35,3 +35,35 @@ Bench, new build (module 259e, addr 0x28, joined after ~60 s):
   The new build re-flashed afterwards was also not joinable within 3 joins (60 s + 3 attempts).
   Needs Oren: AP check / case power cycle, then rerun the stock reference and the new build.
 Final device state: new build (crc C494FF32) flashed.
+
+## Task 9 (pending bench): OTA round trip A -> B -> A
+
+Status: tooling built and checked off-device only (formatter test, tagged build, `ota_push.py --dry-run`,
+and a loopback mock server). The device round trip has NOT been run; record results below when done.
+
+Variant images (from `Firmware/arduino`; the 2Wireless build overwrites build/2Wireless each time):
+
+    ./build.sh FramLoader
+    ./build.sh 2Wireless --profile wpm            && cp build/2Wireless/2Wireless.ota.bin build/variants/A.ota.bin
+    ./build.sh 2Wireless --profile wpm --tag b    && cp build/2Wireless/2Wireless.ota.bin build/variants/B.ota.bin
+    (flash variant A's full image first: rebuild untagged, then ./flash.sh build/2Wireless/2Wireless.ino.bin)
+
+Step 3, with variant A running and the Mac joined to the WPM AP (BUCHLA200E):
+
+    cd Firmware/arduino/bench
+    ./wpm.sh get version                              # expect no "build" key
+    python3 ./ota_push.py ../build/variants/B.ota.bin # prints size, CRC32, push + verify times, commit URL
+    ./wpm.sh get 'ota/commit?len=<N>&crc32=<HEX>'     # URL printed by ota_push.py; note reply time -> {"ok":true,...}
+    ./wifi_rejoin.sh                                  # 60 s wait, one join, poll up to 90 s; note elapsed
+    ./wpm.sh get version                              # expect "build":"b", app_crc32 = pushed CRC
+    ./wpm.sh get ota/status                           # expect last:"ok"
+    # then back to A the same way:
+    python3 ./ota_push.py ../build/variants/A.ota.bin
+    ./wpm.sh get 'ota/commit?len=<N>&crc32=<HEX>'
+    ./wifi_rejoin.sh
+    ./wpm.sh get version                              # no "build" key again
+    ./wpm.sh get ota/status
+
+Record per phase: push time, verify time, copy time (commit reply -> HTTP returns), total rejoin seconds.
+
+Off-device sizes (this commit): A ota 113764 bytes crc32 AC731C94; B (--tag b) ota 113772 bytes crc32 7FB989E5.
