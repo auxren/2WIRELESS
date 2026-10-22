@@ -6,8 +6,9 @@
   `Firmware/arduino/build.sh` (arduino-cli, core `arduino:samd@1.8.14`, `WiFi101@0.16.1`, vendored
   MIDIUSB and USB_Host_Library_SAMD, a `boards.local.txt` overlay for the Studio H USB identity), and
   `flash.sh` uploads over USB with bossac.
-- Vendored `WireByte` (per-byte I2C slave serving) reproduces the shipped v1.18 card-serving behaviour;
-  `/getpresets` capture data is served from FRAM per byte.
+- Vendored `WireByte` (per-byte I2C slave serving); `/getpresets` capture data is served from FRAM per
+  byte. Equivalence to the shipped v1.18 behaviour is not yet established (bench B1); the one recorded
+  device run differed on a second capture, see `Firmware/arduino/bench/RESULTS.md`.
 - New `GET /version` capability route. `FW_VERSION` is now "1.19".
 - `server.begin()` is called once in `setup()` instead of per association (stock left port 80 closed
   after association churn). The capture counter is reset before each `sendBackupPresets`.
