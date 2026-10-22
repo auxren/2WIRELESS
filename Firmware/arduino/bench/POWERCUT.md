@@ -88,7 +88,7 @@ solid for under 1 s (reject before copy), then app up; `wifi_rejoin.sh`.
 Expected: `last:"crc_mismatch"`, `pending:false`, `/version` build = the previously running tag
 (old app still runs), flash not touched. Then `curl --interface en1 http://192.168.0.1/ota/abort`.
 
-## Step 4: oversize and broken vectors, after a real reboot
+## Step 4: oversize, broken head and stock head, after a real reboot
 
 Power-cycle first (owner, 5 s off, USB out), `wifi_rejoin.sh`, then
 `curl --interface en1 'http://192.168.0.1/ota/commit?len=L&crc32=00000000'` for each:
@@ -97,33 +97,50 @@ bank (nothing staged) (expected `"error":"image"`); stage a valid image and comm
 (expected `"error":"crc"`); `/ota/abort` (expected `ok`). After each, `/ota/status` must show
 `pending:false`; the app keeps running (build tag unchanged), no reboot.
 
+Two more checks for the app marker (the stock image has no marker at 0x1C):
+
+(a) Stock head at commit. `ota_push.py` refuses the stock bin
+(`error: not a WPM app image: no valid marker at 0x1C (stage only a build.sh 2Wireless.ota.bin; a stock or full .ino.bin is refused)`),
+so write only the stock image's first 64 bytes (hex from
+`python3 -c "print(open('Firmware/arduino/2Wireless/bin/2Wireless.ino.bin','rb').read()[:64].hex())"`):
+
+```
+$W post /writememory '[{"addr":"0","data":"0080002005cb0000edca0000edca000000000000000000000000000000000000000000000000000000000000edca00000000000000000000edca000059cb0000"}]'
+curl --interface en1 'http://192.168.0.1/ota/commit?len=108612&crc32=00000000'
+```
+Expected `"error":"image"` (the head check runs before the CRC pass; 108612 is a valid len). No reboot.
+
+(b) Loader-side guard. Hand-write a record that names the stock head (`OTA1`, len 108612 = 0x1A844 LE
+= `44a80100`, crc 0, flags 0, last 0, app_crc 0):
+
+```
+$W post /writememory '[{"addr":"2be50","data":"4f54413144a8010000000000000000000000"}]'
+```
+`$W get /ota/status` shows `pending:true`. Owner power-cycles (USB out). Expected: LED solid under 1 s
+(reject before any erase), app up, `last:"image"`, `pending:false`, `/version` build tag unchanged. Then
+`curl --interface en1 http://192.168.0.1/ota/abort`.
+
 ## Step 5: recovery drill (brick and reflash)
 
-Record for len=0x1000 over an all-zero image: CRC32 of 4096 zero bytes = `C71C0011`.
+The zero-image route is now refused before the copy (no marker), so brick the unit over USB instead.
+Craft `Firmware/arduino/build/brick.ino.bin` = the variant A full image with bytes 0x4000..0x40FF
+(the app's vector table) zeroed:
 
 ```
-python3 - <<'PY'     # 64 zero elements of 64 B at FRAM 0..0xFFF, in one POST
-import json;print(json.dumps([{"addr":"%x"%a,"data":"00"*64} for a in range(0,0x1000,64)],separators=(",",":")))
-PY
+python3 -c "
+d=bytearray(open('Firmware/arduino/build/variants/a/2Wireless.ino.bin','rb').read())
+d[0x4000:0x4100]=bytes(0x100)
+open('Firmware/arduino/build/brick.ino.bin','wb').write(d)"
 ```
-Post that JSON with `$W post /writememory '<json>'` (4 KB body: well under the 15 KB part limit),
-verify with `$W get '/readmemory?addr=0x0&length=128'` (all zeros), then write the record:
-
-```
-$W post /writememory '[{"addr":"2be50","data":"4f5441310010000011001cc7000000000000"}]'
-```
-(`OTA1`, len 0x1000, crc C71C0011 LE, flags 0, last 0, app_crc 0.) Check with `$W get /ota/status` (pending:true).
-
-Owner power-cycles (USB out). Expected: loader copies 4 KB of zeros (LED solid about 1 s), verifies
-the flash CRC (ok), writes `last:"ok"`, resets; then `flash_app_ok()` fails (zero vectors) so the
-LED **blinks at 5 Hz for 3 s**, then the loader resets into SAM-BA (LED off, HTTP never answers).
-Owner confirms the blink. Recover: plug USB data in (the bootloader port 0x2341 "Arduino MKR1000"
-enumerates; `ls /dev/cu.usbmodem*`), close any serial reader, then
-`bash Firmware/arduino/flash.sh Firmware/arduino/2Wireless/bin/2Wireless.ino.bin` (shipped v1.18) or the
-branch's `build/2Wireless/2Wireless.ino.bin` (this rewrites the loader slot as well, with the slow loader
-if that is what is in `build/`). flash.sh finds the bootloader port and skips the touch. Expected: back
-in one upload, `wifi_rejoin.sh` OK, `/version` correct. If USB was unplugged during the hand-off, plug
-it in and power-cycle once (POR clears the magic; the loader blinks 3 s and hands off again).
+USB plugged, no serial reader: `bash Firmware/arduino/flash.sh Firmware/arduino/build/brick.ino.bin`.
+Expected: after bossac's reset the loader finds no plausible app (SP word 0 fails) and the LED
+**blinks at 5 Hz for 3 s**, then the loader hands off to SAM-BA: the "Arduino MKR1000" bootloader
+port (0x2341) stays enumerated (`ls /dev/cu.usbmodem*`) and HTTP never answers. Owner's only job:
+confirm the 3 s blink.
+Recover: `bash Firmware/arduino/flash.sh Firmware/arduino/build/variants/a/2Wireless.ino.bin`
+(flash.sh finds the 0x2341 port, no touch), then `wifi_rejoin.sh`; `/version` build "a". If USB was
+unplugged during the hand-off, plug it in and power-cycle once (POR clears the magic; the loader
+blinks 3 s and hands off again).
 
 ## Results (controller fills in)
 
@@ -139,5 +156,7 @@ it in and power-cycle once (POR clears the magic; the loader blinks 3 s and hand
 | 3 | hand record | power cycle | | | |
 | 4 | len=0 / 1001 / 179482 | n/a | | | |
 | 4 | len=1000 image / DEADBEEF crc | n/a | | | |
-| 5 | brick | power cycle | | | |
+| 4 | stock head commit | n/a | | | |
+| 4 | stock record power cycle | power cycle | | | |
+| 5 | brick (USB) | n/a | | | |
 | 5 | recovery | n/a | | | |

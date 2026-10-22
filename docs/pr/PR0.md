@@ -39,13 +39,20 @@ Nothing existing changes:
   `{"ok":false,"error":"len|image|crc|busy"}`.
 - `FW_VERSION` is "1.19".
 
-## Known limitation
+## App image marker and the 1200-baud touch
 
-The loader's header check validates only the stack pointer and reset vector ranges (SP in SRAM, reset
-vector odd and in [0x6000, 0x40000)). It cannot tell a 0x2000-linked binary (for example the stock
-v1.18 `bin/2Wireless.ino.bin`) from a 0x6000-linked one. Only `.ota.bin` files produced by `build.sh`
-are valid OTA images; committing anything else may brick the app until a USB reflash. A future PR may
-add an image signature.
+App image marker: every valid app image carries a 16-byte marker at app-image offset 0x1C
+(vector-table entries 7..10, reserved on ARMv6-M and never fetched, so the Arduino core leaves
+them zero): `"WPMAPP1\0"`, link base LE32 0x6000, image length LE32 (the `.ota.bin` length).
+In the full `.ino.bin` it sits at file offset 0x401C. `build.sh` stamps it and refuses to build
+if the slot is not empty. The "head" is the first 44 bytes of an app image; `/ota/commit` and the
+loader both check it (vectors plus marker, marker length == record len), so a stock or full image
+is refused before anything is erased. `build.sh` also removes `2Wireless.ino.hex` (it is unstamped;
+`flash.sh` takes the `.bin`).
+
+The vector ranges alone cannot tell a 0x2000-linked binary (for example the stock v1.18
+`bin/2Wireless.ino.bin`) from a 0x6000-linked one; the marker can, and it is the only guard against
+staging such an image. `/ota/status` `last` is one of `ok`, `crc_mismatch`, `image`, `none`.
 
 The 1200-baud touch (done by `flash.sh` and `arduino-cli upload`, not by bossac itself) erases the flash
 row at 0x2000 before resetting into SAM-BA (Arduino core `Reset.cpp`). By design SAM-BA then stays

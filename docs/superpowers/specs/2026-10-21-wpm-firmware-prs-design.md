@@ -154,13 +154,19 @@ Decided with the app session: route shapes in §6. The rest are the builder-side
   last_result(1) app_crc32(4)`; the loader verifies CRC32 (zlib polynomial, as `Buchla200eCrc32`) over
   FRAM `[0..len)`, erases/writes flash from **0x6000** in 256-byte rows, verifies the flash CRC, clears
   the magic, sets `last_result`, jumps. Non-matching CRC → clears the magic, sets
-  `last_result = crc_mismatch`, boots the existing app. No plausible app in flash (vectors fail the
-  sanity check below) → the loader blinks the LED at 5 Hz for 3 s, then writes the SAM-BA double-tap
+  `last_result = crc_mismatch` (2), boots the existing app. Before any erase the loader also checks
+  `len` and the staged head (below); a failure clears the magic, sets `last_result = image` (3) and
+  boots the existing app. No plausible app in flash (head fails the check below) → the loader blinks the LED at 5 Hz for 3 s, then writes the SAM-BA double-tap
   magic (0x07738135 at 0x20007FFC) and resets, so the stock bootloader stays resident with its USB
   port and one bossac upload recovers the unit without reaching the reset button. **Maximum `len` = 0x2BD18** (179,480 bytes):
   the FRAM scratch area, so a staged image can never reach the SSID/password, settings or the record
-  itself (it is also below the flash app region's 0x3A000). The image sanity check is: word 0 in
-  0x20000000..0x20008000, word 1 odd and inside 0x6000..0x40000.
+  itself (it is also below the flash app region's 0x3A000). The image head check
+  (the first 44 bytes of an app image) is: word 0 in 0x20000000..0x20008000, word 1 odd and inside
+  0x6000..0x40000, and a 16-byte app marker at offset 0x1C (vector entries 7..10, reserved on ARMv6-M):
+  `"WPMAPP1\0"`, link base LE32 = 0x6000, image length LE32. `build.sh` stamps it (full `.ino.bin`
+  offset 0x401C; the `.ota.bin` is the stamped bin minus 0x4000). `/ota/commit` and the loader require
+  marker length == `len`; the loader's flash check at boot has no record and passes `len` 0, which
+  skips the length comparison. This makes a stock or full image impossible to commit.
 - **(call) Loader boot cost.** On every boot the loader initialises SERCOM1 SPI, reads the 18-byte
   record and, if no magic, de-initialises SPI (leaves the SERCOM and pins as reset) and jumps: well
   under 1 ms, so the ~20 ms I²C-slave availability and the "boot timing unchanged" contract hold. The
@@ -204,11 +210,12 @@ Each PR is a branch off `master`, independently mergeable, with its own README s
   "uptime_s":N,"rssi":-NN,"tcp_sockets_free":N,"app_crc32":"HEX"}`. `loader` absent when the loader
   section is not present (dev builds).
 - OTA: transfer via existing `/writememory` into scratch from 0; `/ota/commit?len=N&crc32=HEX` →
-  checks `busy` first (job running, `"error":"busy"`; never returned by PR 0, which has no background job), then in order `len` (0, odd, > 0x2BD18 (see §5) → `"error":"len"`), image sanity (word 0 in
-  0x20000000..0x20008000, word 1 odd and inside 0x6000..0x40000 → `"error":"image"`), CRC over FRAM
+  checks `busy` first (job running, `"error":"busy"`; never returned by PR 0, which has no background job), then in order `len` (0, odd, > 0x2BD18 (see §5) → `"error":"len"`), image head (word 0 in
+  0x20000000..0x20008000, word 1 odd and inside 0x6000..0x40000, app marker at 0x1C with base 0x6000
+  and length == `len` → `"error":"image"`), CRC over FRAM
   (`"error":"crc"`), job running (`"error":"busy"`); on success writes the record, replies
   `{"ok":true,"pending":{"len":N,"crc32":"HEX"}}`, then `NVIC_SystemReset()` after the reply is flushed.
-  `/ota/status` → `{"loader":"fram-loader-1","pending":false,"last":"ok"|"crc_mismatch"|"none",
+  `/ota/status` → `{"loader":"fram-loader-1","pending":false,"last":"ok"|"crc_mismatch"|"image"|"none",
   "app_crc32":"HEX"}` (`last` persists until the next commit or abort). `/ota/abort` → `{"ok":true}`.
 
 ### PR 1 — bus scan and status (SCAN, BUS_STATUS, POLL_DONE)
@@ -288,7 +295,8 @@ BUS_STATUS_R, STATUS_R, NAK codes) and `~/Documents/GitHub/Buchla_FW/docs/superp
   includes, on Oren's unit: the first loader flash over USB; a full OTA round trip; a deliberate case
   power cut mid-copy (and mid-CRC, and between record-write and reset) with recovery on the next boot;
   a corrupted staged image (CRC mismatch → old app keeps running, `last:"crc_mismatch"`); an
-  oversize `len`; and an OTA of a deliberately broken app (bad vectors refused at commit). A hung unit
+  oversize `len`; an OTA of a deliberately broken app (bad vectors refused at commit); and a staged stock/full image
+  (refused at commit and by the loader). A hung unit
   is restored with `arduino-cli upload … -i bin/2Wireless.ino.bin` (byte-identical to the shipped app)
   and the attempt is written up before the next iteration. The USB touch is issued only immediately
   before an upload.

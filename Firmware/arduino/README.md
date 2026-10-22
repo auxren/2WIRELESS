@@ -23,7 +23,7 @@ Needs `arduino-cli` and `python3`. `build.sh` installs the pinned core `arduino:
 - Profiles (`boards.local.txt`): `wpm` (Studio H USB identity 0x1209/0xFBA0, "Studio H Software USB
   Midi"), `wpm_loader` (no USB stack, used for `FramLoader`), `mkr1000` (stock core entry).
 - `build.sh` prints size and CRC32 of the `.ino.bin`. For the `wpm` profile it also checks both vector
-  tables (loader at offset 0, app at offset 0x4000), checks the embedded loader blob is current, and
+  tables (loader at offset 0, app at offset 0x4000), checks the embedded loader blob is current, stamps the app marker (below) into the `.ino.bin`, removes the unstamped `2Wireless.ino.hex`, and
   writes `2Wireless.ota.bin`: the `.ino.bin` without its first 0x4000 bytes (the app-only image,
   at most 0x2BD18 bytes, even length).
 - MIDIUSB and USB_Host_Library_SAMD are vendored in `libraries/` with small patches; see each
@@ -66,8 +66,8 @@ How it works: the image is `build/2Wireless/2Wireless.ota.bin`. Stage it in FRAM
 Staging overwrites the preset transfer buffer but never the stored settings. The commit writes a pending
 record to FRAM `0x02BE50` (18 bytes, magic "OTA1", inside the range 0x02BE4D-0x02BE7F that is
 reserved for new state) and resets the WPM. On the next boot the loader at 0x2000 sees the record,
-checks CRC32 over FRAM `[0..len)`, erases and writes flash from 0x6000 in 256-byte rows, verifies the
-flash CRC, clears the magic, records the result and jumps to the app. A bad CRC clears the magic and
+checks `len` and the staged head (vectors plus app marker), checks CRC32 over FRAM `[0..len)`, erases and writes flash from 0x6000 in 256-byte rows, verifies the
+flash CRC, clears the magic, records the result and jumps to the app. A bad CRC (`last_result` 2) or a refused len/head (3, `image`) clears the magic and
 boots the existing app. The loader never erases itself, so a power cut re-runs the copy on the next boot;
 if the flash verify fails, the copy is retried at most 3 times. If flash holds no plausible app (the
 vector check fails), the loader blinks the LED at 5 Hz for 3 s and then hands the unit to the SAM-BA
@@ -77,21 +77,25 @@ upload recovers it without reaching the reset button; each power-up repeats the 
 `bench/ota_push.py <file.ota.bin>` stages and read-back-verifies an image and prints the commit URL; it
 never calls `/ota/commit`.
 
-Image validity limitation: the loader's header check validates only the stack pointer and the reset
-vector (SP in SRAM, reset vector odd and in [0x6000, 0x40000)). It cannot tell a 0x2000-linked binary
-(for example the stock v1.18 `bin/2Wireless.ino.bin`) from a 0x6000-linked one. Only `.ota.bin` files
-produced by `build.sh` are valid OTA images; committing anything else may brick the app until a USB
-reflash. A future PR may add an image signature.
+App image marker: every valid app image carries a 16-byte marker at app-image offset 0x1C
+(vector-table entries 7..10, reserved on ARMv6-M and never fetched, so the Arduino core leaves
+them zero): `"WPMAPP1\0"`, link base LE32 0x6000, image length LE32 (the `.ota.bin` length).
+In the full `.ino.bin` it sits at file offset 0x401C. `build.sh` stamps it and refuses to build
+if the slot is not empty. The "head" is the first 44 bytes of an app image; `/ota/commit` and the
+loader both check it (vectors plus marker, marker length == record len), so a stock or full image
+is refused before anything is erased. `build.sh` also removes `2Wireless.ino.hex` (it is unstamped;
+`flash.sh` takes the `.bin`).
+`bench/ota_push.py` refuses a file without a valid marker before any network call.
 
 Route contract (all replies HTTP 200 with a JSON body):
 
 - `/ota/commit?len=N&crc32=HEX` checks in order job running (`"error":"busy"`), `len` (0, odd, or
-  greater than 0x2BD18 gives `"error":"len"`), image sanity (word 0 in 0x20000000..0x20008000, word 1
-  odd and inside 0x6000..0x40000 gives `"error":"image"`), CRC over FRAM (`"error":"crc"`). `busy` is
+  greater than 0x2BD18 gives `"error":"len"`), image head (word 0 in 0x20000000..0x20008000, word 1
+  odd and inside 0x6000..0x40000, marker at 0x1C with base 0x6000 and length == `len` gives `"error":"image"`), CRC over FRAM (`"error":"crc"`). `busy` is
   never returned by this firmware today (`wpm_ota_busy()` is hard-coded false; no bus jobs exist yet).
   On success it writes the record, replies `{"ok":true,"pending":{"len":N,"crc32":"HEX"}}`,
   then calls `NVIC_SystemReset()` after the reply is flushed.
-- `/ota/status` replies `{"loader":"fram-loader-1","pending":false,"last":"ok"|"crc_mismatch"|"none","app_crc32":"HEX"}`.
+- `/ota/status` replies `{"loader":"fram-loader-1","pending":false,"last":"ok"|"crc_mismatch"|"image"|"none","app_crc32":"HEX"}`.
   `last` persists until the next commit or abort; a commit resets it to none so a stale ok can never
   be read as the new commit's outcome before the loader reports. `/ota/abort` clears the magic and
   sets `last` to none. `app_crc32` is kept in the record but only reported while `last` is "ok".
