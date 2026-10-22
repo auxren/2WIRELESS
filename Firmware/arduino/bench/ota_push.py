@@ -78,18 +78,27 @@ def part_body(part):
                       separators=(",", ":"))
 
 
-def request(host, port, method, path, body=None, timeout=30):
-    conn = http.client.HTTPConnection(host, port, timeout=timeout)
-    try:
-        headers = {}
-        if body is not None:
-            body = body.encode()
-            headers["Content-Type"] = "application/x-www-form-urlencoded"
-        conn.request(method, path, body=body, headers=headers)
-        resp = conn.getresponse()
-        return resp.status, resp.read()
-    finally:
-        conn.close()
+def request(host, port, method, path, body=None, timeout=30, tries=4):
+    """One HTTP request. A refused/reset connection is retried (the WPM refreshes its
+    listening socket now and then, refusing connections for a few milliseconds); any other
+    error, and a reply that was already being read, are not retried (POST bodies are not
+    idempotent for the WPM's streamed /writememory parser)."""
+    headers = {}
+    if body is not None:
+        body = body.encode()
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+    for attempt in range(tries):
+        conn = http.client.HTTPConnection(host, port, timeout=timeout)
+        try:
+            conn.request(method, path, body=body, headers=headers)
+            resp = conn.getresponse()
+            return resp.status, resp.read()
+        except (ConnectionRefusedError, ConnectionResetError):
+            if attempt == tries - 1:
+                raise
+            time.sleep(0.5)
+        finally:
+            conn.close()
 
 
 def read_back(host, port, addr, length):

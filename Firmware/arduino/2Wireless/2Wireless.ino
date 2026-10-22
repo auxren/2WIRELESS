@@ -736,6 +736,7 @@ static void diagDump() { static unsigned long t; if (millis() - t < 3000) return
 #endif
 WiFiClient client;
 unsigned long lastListenMs = 0;
+unsigned long lastServedMs = 0;
 #ifdef WPM_DIAG
 long rebegins = 0, periodicBegins = 0;
 #endif
@@ -888,8 +889,10 @@ void loop() {
   }
   
   // Fallback for a disconnect+reconnect missed between two loop iterations (e.g. during a long
-  // capture): refresh the listener while a station is connected. No client is ever active here.
-  if (status == WL_AP_CONNECTED && millis() - lastListenMs > 10000) {
+  // capture): refresh the listener while a station is connected but nothing has been served for
+  // 10 s (a live listener needs no refresh, and a refresh refuses connections for a few ms).
+  // No client is ever active here.
+  if (status == WL_AP_CONNECTED && millis() - lastListenMs > 10000 && millis() - lastServedMs > 10000) {
     server.begin();
     lastListenMs = millis();
     DIAG("pb", ++periodicBegins);
@@ -898,6 +901,7 @@ void loop() {
   //When web page is served, we return to this with no client. 
   //TO DO: If device was disconnected from AP, then it seems AP needs to be reconstructed here.
   if (client) {                             // if you get a client,
+    lastServedMs = millis();
     DEBUG_PRINTLN("new client");           // print a message out the serial port
     String currentLine = "";                // make a String to hold incoming data from the client
     String urlString = "";                  // string to hold the request URL
