@@ -822,7 +822,7 @@ void setup() {
     // don't continue
     DIAG_HALT();
   }
-  server.begin(); // once; never re-begin on association churn
+  server.begin(); // first listener; loop() re-creates it on each association and every 10 s
   DIAG("l0", WiFiSocket.listening(0));
 
   // wait 10 seconds for connection:
