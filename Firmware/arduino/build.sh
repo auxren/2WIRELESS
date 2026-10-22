@@ -67,6 +67,8 @@ arduino-cli compile --fqbn "arduino:samd:$PROFILE" --libraries "$HERE/libraries"
   ${TAG_ARGS[@]+"${TAG_ARGS[@]}"} $VERBOSE --output-dir "$OUT" --warnings default "$HERE/$SKETCH"
 
 BIN="$OUT/$SKETCH.ino.bin"
+# The wpm app image is stamped below and its final size/crc printed there; the loader is final as linked.
+[ "$SKETCH" = "2Wireless" ] && [ "$PROFILE" = "wpm" ] || \
 python3 -c 'import sys,zlib;d=open(sys.argv[1],"rb").read();print("size %d crc32 %08X"%(len(d),zlib.crc32(d)&0xffffffff))' "$BIN"
 
 if [ "$SKETCH" = "FramLoader" ]; then
@@ -118,6 +120,7 @@ print("embedded loader: %d bytes crc32 %08X (blob padded to 0x4000)" % (len(ldr)
 print("vectors ok: loader sp=%08X reset=%08X, app sp=%08X reset=%08X" % (sp, rst, asp, arst))
 print("ota size %d crc32 %08X -> %s" % (len(ota), zlib.crc32(ota) & 0xffffffff, sys.argv[2]))
 PYEOF
-  # The .hex is unstamped (no marker); flash.sh takes the stamped .bin, so drop the .hex.
-  rm -f "$OUT/2Wireless.ino.hex"
+  # The .hex and the with_bootloader images are unstamped (no marker) and would hand off to SAM-BA
+  # at boot; flash.sh takes the stamped .bin, so drop them.
+  rm -f "$OUT/2Wireless.ino.hex" "$OUT/2Wireless.ino.with_bootloader.bin" "$OUT/2Wireless.ino.with_bootloader.hex"
 fi

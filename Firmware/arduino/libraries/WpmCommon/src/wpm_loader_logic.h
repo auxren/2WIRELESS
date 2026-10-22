@@ -8,7 +8,7 @@ enum WpmLoaderAction {
 };
 
 // pending: the FRAM record carries the "OTA1" magic.
-// flash_app_ok: wpm_ota_check_vectors() accepted the vectors at the app base.
+// flash_app_ok: wpm_ota_check_head(head, 0) accepted the 44-byte head at the app base.
 inline WpmLoaderAction wpm_loader_decide(bool pending, bool flash_app_ok) {
   if (pending) return WPM_LOADER_COPY;
   return flash_app_ok ? WPM_LOADER_JUMP : WPM_LOADER_BLINK;

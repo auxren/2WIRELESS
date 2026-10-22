@@ -75,6 +75,10 @@ int main() {
     CHECK(wpm_ota_check_head(stock, 108612) == WPM_OTA_ERR_IMAGE);
     CHECK(wpm_ota_check_head(stock, 0) == WPM_OTA_ERR_IMAGE);
 
+    // The offsets are part of the OTA contract (mirrored by the Mac app): pin the literals.
+    static_assert(WPM_APP_MARKER_OFF == 0x1C, "marker offset is the contract value");
+    static_assert(WPM_OTA_HEAD_LEN == 44, "head length is the contract value");
+    static_assert(WPM_APP_MARKER_LEN == 16, "marker length is the contract value");
     const uint8_t magic[8] = {'W', 'P', 'M', 'A', 'P', 'P', '1', 0};
     const uint8_t magic2[8] = {'W', 'P', 'M', 'A', 'P', 'P', '2', 0};
     const uint8_t zero8[8] = {0};

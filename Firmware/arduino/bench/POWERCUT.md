@@ -93,7 +93,8 @@ Expected: `last:"crc_mismatch"`, `pending:false`, `/version` build = the previou
 Power-cycle first (owner, 5 s off, USB out), `wifi_rejoin.sh`, then
 `curl --interface en1 'http://192.168.0.1/ota/commit?len=L&crc32=00000000'` for each:
 `len=0`, `len=1001`, `len=179482` (expected `"error":"len"`); `len=1000` with FRAM 0 holding the preset
-bank (nothing staged) (expected `"error":"image"`); stage a valid image and commit with `crc32=DEADBEEF`
+bank (nothing staged) (expected `"error":"image"`); stage a valid image and commit with its own `len`
+(the marker length; any other even len is refused as `image`) and `crc32=DEADBEEF`
 (expected `"error":"crc"`); `/ota/abort` (expected `ok`). After each, `/ota/status` must show
 `pending:false`; the app keeps running (build tag unchanged), no reboot.
 

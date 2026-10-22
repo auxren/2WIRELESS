@@ -70,7 +70,7 @@ checks `len` and the staged head (vectors plus app marker), checks CRC32 over FR
 flash CRC, clears the magic, records the result and jumps to the app. A bad CRC (`last_result` 2) or a refused len/head (3, `image`) clears the magic and
 boots the existing app. The loader never erases itself, so a power cut re-runs the copy on the next boot;
 if the flash verify fails, the copy is retried at most 3 times. If flash holds no plausible app (the
-vector check fails), the loader blinks the LED at 5 Hz for 3 s and then hands the unit to the SAM-BA
+head check fails: vectors or marker), the loader blinks the LED at 5 Hz for 3 s and then hands the unit to the SAM-BA
 bootloader (double-tap magic + reset), so the "Arduino MKR1000" USB port appears and one `flash.sh`
 upload recovers it without reaching the reset button; each power-up repeats the blink and hand-off.
 
