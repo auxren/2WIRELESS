@@ -1,16 +1,18 @@
 #!/bin/bash
 # Reproducible arduino-cli build for the WPM firmware.
-# Usage: build.sh [2Wireless|FramLoader] [--profile wpm|wpm_loader|mkr1000]
+# Usage: build.sh [2Wireless|FramLoader] [--profile wpm|wpm_loader|mkr1000] [--verbose]
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SKETCH="2Wireless"
 PROFILE="wpm"
+VERBOSE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile) PROFILE="$2"; shift 2 ;;
+    --verbose) VERBOSE="-v"; shift ;;
     2Wireless|FramLoader) SKETCH="$1"; shift ;;
-    *) echo "usage: $0 [2Wireless|FramLoader] [--profile wpm|wpm_loader|mkr1000]" >&2; exit 2 ;;
+    *) echo "usage: $0 [2Wireless|FramLoader] [--profile wpm|wpm_loader|mkr1000] [--verbose]" >&2; exit 2 ;;
   esac
 done
 
@@ -29,7 +31,7 @@ cp "$HERE/boards.local.txt" "$CORE_DIR/boards.local.txt"
 
 OUT="$HERE/build/$SKETCH"
 arduino-cli compile --fqbn "arduino:samd:$PROFILE" --libraries "$HERE/libraries" \
-  --output-dir "$OUT" --warnings default "$HERE/$SKETCH"
+  $VERBOSE --output-dir "$OUT" --warnings default "$HERE/$SKETCH"
 
 BIN="$OUT/$SKETCH.ino.bin"
 python3 -c 'import sys,zlib;d=open(sys.argv[1],"rb").read();print("size %d crc32 %08X"%(len(d),zlib.crc32(d)&0xffffffff))' "$BIN"

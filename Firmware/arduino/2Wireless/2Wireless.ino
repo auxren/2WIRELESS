@@ -10,7 +10,7 @@
  *   11      D11   |  PA08  | "SDA"
  *   12      D12   |  PA09  | "SCL"
 */
-#include <Wire.h>
+#include "src/WireByte.h"
 #include <WiFi101.h>
 #include <SPI.h>
 #include <usbh_midi.h>
