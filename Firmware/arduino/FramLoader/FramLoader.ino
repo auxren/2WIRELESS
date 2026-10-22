@@ -83,10 +83,12 @@ static bool flash_app_ok() {
 }
 
 // No plausible application: blink at 5 Hz for 3 s so the fault is visible, then hand the
-// unit to the SAM-BA bootloader the way the core's 1200-baud touch does (the double-tap
-// magic word survives a system reset; the bootloader then stays resident and enumerates its
-// USB port), so a USB upload recovers the unit without reaching the reset button. On a
-// power-on reset the bootloader clears the magic, so each power-up repeats blink + hand-off.
+// unit to the SAM-BA bootloader through its own double-tap path (the magic word survives a
+// system reset; the bootloader sees it on a non-POR reset, clears it and stays resident with
+// its USB port), so a USB upload recovers the unit without reaching the reset button. The
+// core's 1200-baud touch instead erases the row at 0x2000, which here would destroy this
+// loader. On a power-on reset the bootloader clears the magic, so each power-up repeats
+// blink + hand-off.
 #define BOOT_DOUBLE_TAP_ADDRESS (0x20007FFCul)
 #define DOUBLE_TAP_MAGIC 0x07738135
 [[noreturn]] static void blink_then_bootloader() {

@@ -4,7 +4,7 @@
 enum WpmLoaderAction {
   WPM_LOADER_JUMP,   // start the application at WPM_APP_FLASH_BASE
   WPM_LOADER_COPY,   // verify and copy the staged FRAM image to flash
-  WPM_LOADER_BLINK   // nothing valid to run: blink the LED forever
+  WPM_LOADER_BLINK   // nothing valid to run: blink the LED, then hand off to SAM-BA
 };
 
 // pending: the FRAM record carries the "OTA1" magic.
