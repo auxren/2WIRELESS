@@ -72,6 +72,7 @@ WpmScanAction WpmBusScan::step(uint32_t now_ms) {
 }
 
 void WpmBusScan::query_failed(uint32_t now_ms) {
+  if (state_ != WPM_SCAN_SCANNING || phase_ != PH_WAIT) return;  // only valid right after a QUERY
   err_ = WPM_BUS_ERR_SEND_TIMEOUT;
   window_ = false;
   phase_ = PH_GAP;

@@ -180,7 +180,41 @@ int main() {
     CHECK(wpm_bus_route_match("GET /bus/scan/status HTTP/1.1", c, 4) == 0);
     CHECK(wpm_bus_route_match("GET /bus/scan?first=08&last=77 HTTP/1.1", c, 4) == 1);
     CHECK(wpm_bus_route_match("GET /bus/status HTTP/1.1", c, 4) == 2);
+    CHECK(wpm_bus_route_match("GET /bus/polldone HTTP/1.1", c, 4) == 3);
     CHECK(wpm_bus_route_match("GET /currentpreset HTTP/1.1", c, 4) == -1);
+  }
+  {  // millis_wraparound
+    WpmBusScan s;
+    uint32_t t = 0xFFFFFF00u;
+    s.start(0x10, 0x10, t);
+    CHECK(s.step(t) == WPM_SCAN_ACT_QUERY);
+    CHECK(s.step(t + 299) == WPM_SCAN_ACT_NONE);  // wraps past 0 here
+    CHECK(s.state() == WPM_SCAN_SCANNING);
+    s.step(t + 300);  // window elapsed, gap starts
+    s.step(t + 449);
+    CHECK(s.state() == WPM_SCAN_SCANNING);
+    s.step(t + 450);
+    CHECK(s.state() == WPM_SCAN_DONE);
+    CHECK(s.count() == 0);
+  }
+  {  // second_frame_is_stray
+    WpmBusScan s;
+    s.start(0x28, 0x28, 0);
+    s.step(0);
+    reply(s, 0x28, "31.0   ");
+    reply(s, 0x28, "99.9   ");
+    CHECK(s.stray_replies() == 1);
+    s.step(10);
+    CHECK(s.count() == 1);
+    CHECK(std::memcmp(s.found()[0].ver, "31.0   ", 7) == 0);
+  }
+  {  // query_failed_guarded
+    WpmBusScan s;
+    s.query_failed(0);  // idle: no-op
+    CHECK(s.last_error() == WPM_BUS_ERR_NONE);
+    s.start(0x10, 0x10, 0);
+    s.query_failed(0);  // SEND phase, no QUERY yet: no-op
+    CHECK(s.last_error() == WPM_BUS_ERR_NONE);
   }
   {  // found_cap
     WpmBusScan s;
@@ -195,5 +229,6 @@ int main() {
     CHECK(s.count() == WPM_SCAN_MAX_FOUND);
     CHECK(s.idx() == WPM_SCAN_MAX_FOUND);
   }
+  std::printf("test_bus_scan: %d failures\n", minitest_failures);
   return minitest_failures;
 }

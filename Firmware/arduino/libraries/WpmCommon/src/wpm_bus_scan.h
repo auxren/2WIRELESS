@@ -39,7 +39,10 @@ class WpmBusScan {
                     uint32_t reply_ms = WPM_SCAN_REPLY_MS);
   // Returns ACT_QUERY exactly once per address; otherwise NONE.
   WpmScanAction step(uint32_t now_ms);
-  void query_failed(uint32_t now_ms);  // last_error SEND_TIMEOUT, skip to the gap
+  // last_error SEND_TIMEOUT, skip to the gap. No-op unless SCANNING and in the reply-wait phase.
+  void query_failed(uint32_t now_ms);
+  // Note: the ISR has no clock, so a reply arriving after the window but before step() notices
+  // the timeout is still accepted; the overshoot is bounded by main-loop latency.
   // ISR-side: writes a one-slot mailbox only; step() consumes it. A frame for another address,
   // or outside a window, is counted in stray_replies() and otherwise ignored.
   void on_version_frame(uint8_t from_addr, const uint8_t* ver, size_t n);
