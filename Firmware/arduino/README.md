@@ -91,8 +91,8 @@ Route contract (all replies HTTP 200 with a JSON body):
 - `/ota/status` replies `{"loader":"fram-loader-1","pending":false,"last":"ok"|"crc_mismatch"|"none","app_crc32":"HEX"}`.
   `last` persists until the next commit or abort; a commit resets it to none so a stale ok can never
   be read as the new commit's outcome before the loader reports. `/ota/abort` clears the magic and
-  sets `last` to none. `app_crc32` is kept in the record but only reported while `last` is "ok". `loader` is absent when the loader section is not
-  present; `app_crc32` is `"unknown"` unless `last` is `"ok"`.
+  sets `last` to none. `app_crc32` is kept in the record but only reported while `last` is "ok".
+  `loader` is absent when the loader section is not present; `app_crc32` is `"unknown"` unless `last` is `"ok"`.
 - `/ota/abort` replies `{"ok":true}`.
 - Refusals are HTTP 200 with `{"ok":false,"error":"len|image|crc|busy"}`, never 4xx/5xx.
 

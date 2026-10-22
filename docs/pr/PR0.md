@@ -47,9 +47,11 @@ v1.18 `bin/2Wireless.ino.bin`) from a 0x6000-linked one. Only `.ota.bin` files p
 are valid OTA images; committing anything else may brick the app until a USB reflash. A future PR may
 add an image signature.
 
-The 1200-baud touch (done by `flash.sh` and arduino-cli/bossac uploads) erases the flash row at 0x2000
-before resetting into SAM-BA; SAM-BA then stays resident and the upload rewrites the whole image, so USB
-recovery is unchanged. Never do the touch without an upload following it.
+The 1200-baud touch (done by `flash.sh` and `arduino-cli upload`, not by bossac itself) erases the flash
+row at 0x2000 before resetting into SAM-BA (Arduino core `Reset.cpp`). By design SAM-BA then stays
+resident, because the vector at 0x2000 is invalid, and the upload rewrites the whole image, so USB
+recovery is unchanged; bench B2 confirms this on the device. Never do the touch without an upload
+following it.
 
 ## What was bench-tested
 

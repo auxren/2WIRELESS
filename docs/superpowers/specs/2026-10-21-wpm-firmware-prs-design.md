@@ -201,7 +201,7 @@ Each PR is a branch off `master`, independently mergeable, with its own README s
   "uptime_s":N,"rssi":-NN,"tcp_sockets_free":N,"app_crc32":"HEX"}`. `loader` absent when the loader
   section is not present (dev builds).
 - OTA: transfer via existing `/writememory` into scratch from 0; `/ota/commit?len=N&crc32=HEX` →
-  checks in order `len` (0, odd, > 0x2BD18 (see §5) → `"error":"len"`), image sanity (word 0 in
+  checks `busy` first (job running, `"error":"busy"`; never returned by PR 0, which has no background job), then in order `len` (0, odd, > 0x2BD18 (see §5) → `"error":"len"`), image sanity (word 0 in
   0x20000000..0x20008000, word 1 odd and inside 0x6000..0x40000 → `"error":"image"`), CRC over FRAM
   (`"error":"crc"`), job running (`"error":"busy"`); on success writes the record, replies
   `{"ok":true,"pending":{"len":N,"crc32":"HEX"}}`, then `NVIC_SystemReset()` after the reply is flushed.
