@@ -44,8 +44,10 @@ void wpm_ota_handle_status(WiFiClient& client) {
 }
 
 void wpm_ota_handle_abort(WiFiClient& client) {
-  // Clear only the magic; the rest of the record (last result, app crc) is kept.
+  // Clear the magic first (nothing pending), then reset last_result to none (spec: `last`
+  // persists until the next commit or abort). app_crc32 is kept but hidden while last != ok.
   for (int i = 0; i < 4; i++) framWrite((int)(WPM_OTA_RECORD_ADDR + i), 0x00);
+  framWrite((int)(WPM_OTA_RECORD_ADDR + 13), 0x00);
   wpm_send_json(client, "{\"ok\":true}");
 }
 
@@ -98,13 +100,15 @@ void wpm_ota_handle_commit(WiFiClient& client, const String& urlString) {
     return;
   }
 
-  // Carry last_result and app_crc32 over; flags is the loader's retry counter.
+  // New pending record: flags (the loader's retry counter) and last_result start at 0 so a
+  // stale "ok" can never be mistaken for this commit's outcome; app_crc32 is carried over.
   uint8_t raw[WPM_OTA_RECORD_LEN];
   WpmOtaRecord rec = {};
   readRecord(raw, &rec);
   rec.len = len;
   rec.crc32 = crcExpected;
   rec.flags = 0;
+  rec.last_result = 0;
   rec.pending = true;
   wpm_ota_record_serialize(&rec, raw);
   // Body first, magic last: a power cut mid-write never leaves a half record pending.
