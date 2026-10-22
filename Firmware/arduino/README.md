@@ -17,12 +17,14 @@ Needs `arduino-cli` and `python3`. `build.sh` installs the pinned core `arduino:
 `WiFi101@0.16.1`, and copies `boards.local.txt` next to the core's `boards.txt`.
 
     ./build.sh 2Wireless --profile wpm        # -> build/2Wireless/2Wireless.ino.bin and 2Wireless.ota.bin
-    ./build.sh FramLoader                      # only when the loader changes; regenerates src/wpm_loader_blob.cpp
+    ./build.sh FramLoader                      # when the loader changes; regenerates src/wpm_loader_blob.cpp
     ./build.sh 2Wireless --profile wpm --tag b # same, with FW_BUILD_TAG "b" (reported as "build" by /version)
 
+- The 2Wireless build compares against `build/FramLoader/FramLoader.ino.bin`; when that file is missing
+  (a fresh clone) `build.sh` builds the loader automatically first.
 - Profiles (`boards.local.txt`): `wpm` (Studio H USB identity 0x1209/0xFBA0, "Studio H Software USB
   Midi"), `wpm_loader` (no USB stack, used for `FramLoader`), `mkr1000` (stock core entry).
-- `build.sh` prints size and CRC32 of the `.ino.bin`. For the `wpm` profile it also checks both vector
+- `build.sh` prints size and CRC32 of the `.ino.bin`. For every 2Wireless profile (`wpm` and `mkr1000`) it also checks both vector
   tables (loader at offset 0, app at offset 0x4000), checks the embedded loader blob is current, stamps the app marker (below) into the `.ino.bin`, removes the unstamped `2Wireless.ino.hex`, and
   writes `2Wireless.ota.bin`: the `.ino.bin` without its first 0x4000 bytes (the app-only image,
   at most 0x2BD18 bytes, even length).
@@ -44,7 +46,9 @@ Needs `arduino-cli` and `python3`. `build.sh` installs the pinned core `arduino:
 
 - `flash.sh` does the Arduino 1200-baud touch (bossac itself does not) only when it is about to upload,
   then runs bossac with verify and reset, and logs the full debug output to
-  `bench/bossac-<timestamp>.log`.
+  `bench/bossac-<timestamp>.log` (ignored by version control). `flash.sh` refuses the port in
+  `WPM_EXCLUDE_PORT` (default `/dev/cu.usbmodem192573201`, another board on the bench Mac; set the
+  variable to override it).
 - The 1200-baud touch (done by `flash.sh` and by `arduino-cli upload`) erases the flash row at 0x2000
   before resetting into SAM-BA (the Arduino core's `Reset.cpp`). Under this layout that row is the
   loader's first row. By design, SAM-BA then stays resident on the next reset because the app vector
@@ -101,6 +105,8 @@ Route contract (all replies HTTP 200 with a JSON body):
   be read as the new commit's outcome before the loader reports. `/ota/abort` clears the magic and
   sets `last` to none. `app_crc32` is kept in the record but only reported while `last` is "ok".
   `loader` is absent when the loader section is not present; `app_crc32` is `"unknown"` unless `last` is `"ok"`.
+  After a USB (bossac) flash the record still names the last OTA-installed image, so `app_crc32` describes
+  the running app only after an OTA; clients must not treat it as the running image's identity after a USB flash.
 - `/ota/abort` replies `{"ok":true}`.
 - Refusals are HTTP 200 with `{"ok":false,"error":"len|image|crc|busy"}`, never 4xx/5xx.
 
@@ -188,9 +194,10 @@ round trip). In order:
   v1.18 head (first 64 bytes at FRAM 0) gave `image`; a valid staged image with `crc32=DEADBEEF` gave
   `crc`; a staged image with one flipped byte, committed with the original CRC, gave `crc`. The app kept
   running and `/ota/status` stayed `pending:false` each time.
-- **Six timed power cuts (Steps 1-2).** All six passed: the new app ran and `last` was "ok". Mid-copy cuts
-  re-copied from row 0 on the next boot (LED solid ~20 s after power-on with the 50 ms bench loader,
-  reset cause SYST); late cuts found the record already committed and booted directly (reset cause POR).
+- **Six timed power cuts (Steps 1-2).** All six passed: the new app ran and `last` was "ok". Two landed
+  mid-copy (the loader re-copied from row 0 on the next boot, LED solid ~20 s after power-on with the 50 ms
+  bench loader, reset cause SYST); three landed after the record was committed (direct jump, reset cause
+  POR); one was unsynced.
   The bench loader copies at 50 ms per row (~22 s for 445 rows); the production loader takes about 1 s.
 - **Hand-written records (Steps 3 and 4).** A record naming a staged image with a flipped byte gave
   `last` "crc_mismatch"; a record naming the stock v1.18 head gave `last` "image". Both were rejected

@@ -53,6 +53,9 @@ is refused before anything is erased. `build.sh` also removes `2Wireless.ino.hex
 The vector ranges alone cannot tell a 0x2000-linked binary (for example the stock v1.18
 `bin/2Wireless.ino.bin`) from a 0x6000-linked one; the marker can, and it is the only guard against
 staging such an image. `/ota/status` `last` is one of `ok`, `crc_mismatch`, `image`, `none`.
+`app_crc32` is the CRC of the last OTA-installed image: after a USB (bossac) flash the record still names that
+image, so `app_crc32` describes the running app only after an OTA; clients must not treat it as the running
+image's identity after a USB flash.
 
 The 1200-baud touch (done by `flash.sh` and `arduino-cli upload`, not by bossac itself) erases the flash
 row at 0x2000 before resetting into SAM-BA (Arduino core `Reset.cpp`). By design SAM-BA then stays
@@ -92,9 +95,10 @@ Oren's WPM in its 200e case on 2026-10-22; tables are in
   v1.18 head (first 64 bytes at FRAM 0) gave `image`; a valid staged image with `crc32=DEADBEEF` gave
   `crc`; a staged image with one flipped byte, committed with the original CRC, gave `crc`. The app kept
   running and `/ota/status` stayed `pending:false` each time.
-- **Six timed power cuts (Steps 1-2).** All six passed: the new app ran and `last` was "ok". Mid-copy cuts
-  re-copied from row 0 on the next boot (LED solid ~20 s after power-on with the 50 ms bench loader,
-  reset cause SYST); late cuts found the record already committed and booted directly (reset cause POR).
+- **Six timed power cuts (Steps 1-2).** All six passed: the new app ran and `last` was "ok". Two landed
+  mid-copy (the loader re-copied from row 0 on the next boot, LED solid ~20 s after power-on with the 50 ms
+  bench loader, reset cause SYST); three landed after the record was committed (direct jump, reset cause
+  POR); one was unsynced.
   The bench loader copies at 50 ms per row (~22 s for 445 rows); the production loader takes about 1 s.
 - **Hand-written records (Steps 3 and 4).** A record naming a staged image with a flipped byte gave
   `last` "crc_mismatch"; a record naming the stock v1.18 head gave `last` "image". Both were rejected
@@ -116,6 +120,13 @@ Not covered by the bench / still true:
   sanctioned flashing path.
 - `build.sh FramLoader --slow <ms>` is a bench artefact and is never committed.
 - A stock unit's `/version` answer and the `v2/` prefix behaviour are spec statements, not device-checked.
+- Main-loop FRAM transactions (including the commit CRC pass, ~2 s) are not guarded against the I2C ISR's
+  own SPI transactions. This is pre-existing; mangled data is caught by the commit CRC and the loader's
+  checks. A critical section is an option for PR 1+.
+- Boot timing with no OTA pending is unmeasured. The loader runs the core's SystemInit, including
+  XOSC32K/DFLL start-up, and the app then restarts them; B6 suggests a small overhead. Measure
+  POR-to-first-I2C-ACK before relying on it, or build the loader CRYSTALLESS.
+- `/version` can take up to ~1 s, because `WiFi.RSSI()` waits for a callback in AP mode.
 
 ## How to reproduce
 

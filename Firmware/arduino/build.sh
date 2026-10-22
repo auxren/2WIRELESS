@@ -62,13 +62,19 @@ if [ -n "$TAG" ] || [ -n "$SLOW" ]; then
   TAG_ARGS=(--build-property "build.extra_flags=$BASE_FLAGS$EXTRA")
 fi
 
+# A fresh clone has no loader bin (build/ is untracked) and the 2Wireless build compares against it.
+if [ "$SKETCH" = "2Wireless" ] && [ ! -f "$HERE/build/FramLoader/FramLoader.ino.bin" ]; then
+  echo "build/FramLoader/FramLoader.ino.bin is missing: building the loader first" >&2
+  "$0" FramLoader
+fi
+
 OUT="$HERE/build/$SKETCH"
 arduino-cli compile --fqbn "arduino:samd:$PROFILE" --libraries "$HERE/libraries" \
   ${TAG_ARGS[@]+"${TAG_ARGS[@]}"} $VERBOSE --output-dir "$OUT" --warnings default "$HERE/$SKETCH"
 
 BIN="$OUT/$SKETCH.ino.bin"
-# The wpm app image is stamped below and its final size/crc printed there; the loader is final as linked.
-[ "$SKETCH" = "2Wireless" ] && [ "$PROFILE" = "wpm" ] || \
+# The wpm and mkr1000 app images are stamped below and its final size/crc printed there; the loader is final as linked.
+{ [ "$SKETCH" = "2Wireless" ] && { [ "$PROFILE" = "wpm" ] || [ "$PROFILE" = "mkr1000" ]; }; } || \
 python3 -c 'import sys,zlib;d=open(sys.argv[1],"rb").read();print("size %d crc32 %08X"%(len(d),zlib.crc32(d)&0xffffffff))' "$BIN"
 
 if [ "$SKETCH" = "FramLoader" ]; then
@@ -83,7 +89,7 @@ if [ "$SKETCH" = "FramLoader" ]; then
   fi
 fi
 
-if [ "$SKETCH" = "2Wireless" ] && [ "$PROFILE" = "wpm" ]; then
+if [ "$SKETCH" = "2Wireless" ] && { [ "$PROFILE" = "wpm" ] || [ "$PROFILE" = "mkr1000" ]; }; then
   # Full image = loader blob (0x2000..0x5FFF) + app (0x6000..). Check both
   # vector tables, stamp the app marker, then emit the app-only OTA image (bin minus first 0x4000).
   python3 - "$BIN" "$OUT/2Wireless.ota.bin" "$HERE/build/FramLoader/FramLoader.ino.bin" <<'PYEOF'

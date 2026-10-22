@@ -80,6 +80,9 @@ Hardware and boot:
   answers 7–11 s after the join. Associating within seconds of power-on, or association churn, has
   left port 80 closed until the next power cycle; `loop()` calls `server.begin()` on every
   WL_AP_CONNECTED transition and never stops the server (WiFi101 socket leak, WINC has 7 TCP sockets).
+  The WINC1500 also drops the listening socket on station re-association while WiFi101 still flags it
+  listening, so the AP listener must be re-created on every WL_AP_CONNECTED transition and refreshed
+  after 10 s idle with a station connected (bench B2).
 
 Firmware (v1.18 source):
 - `setup()` order: pins, `SPI.begin`, `Wire.begin(0x50, generalCall)` + slave callbacks, WiFi101 init
@@ -168,7 +171,7 @@ Decided with the app session: route shapes in §6. The rest are the builder-side
   marker length == `len`; the loader's flash check at boot has no record and passes `len` 0, which
   skips the length comparison. This makes a stock or full image impossible to commit.
 - **(call) Loader boot cost.** On every boot the loader initialises SERCOM1 SPI, reads the 18-byte
-  record and, if no magic, de-initialises SPI (leaves the SERCOM and pins as reset) and jumps: well
+  record and, if no magic, de-initialises SPI (`SPI.end()`; the pin mux on 8/9/10 is left as the core leaves it and the app's `SPI.begin()` re-muxes them) and jumps: well
   under 1 ms, so the ~20 ms I²C-slave availability and the "boot timing unchanged" contract hold. The
   CRC pass runs only when a record is pending. The WINC1500 is not initialised at that point, so the
   loader owning the shared SPI briefly is safe; it must not touch the WINC chip-select/reset pins.
@@ -200,15 +203,18 @@ Each PR is a branch off `master`, independently mergeable, with its own README s
 - Tree builds reproducibly (§5). README: how to build, how to flash over USB (Device mode, data cable,
   no double-tap, the 1200-touch erase warning, the SAM-BA version string "SAM-BA v2.0 Dec 20 2016"),
   how OTA works, and the owner truth: stock v1.18 units need one USB upload to get OTA.
-- `server.begin()` once, after `beginAP`; on client disconnect only `client.stop()`.
+- The AP listener is re-created on every WL_AP_CONNECTED transition and refreshed after 10 s idle with a
+  station connected (the WINC1500 drops the listening socket on station re-association while WiFi101
+  still flags it listening; bench B2); on client disconnect only `client.stop()`.
 - `/getpresets`: `write_counter = fram_address = 0` **before** `sendBackupPresets` (behaviour otherwise
   unchanged).
 - `/version` → `{"version":"1.19","board":"mkr1000","loader":"fram-loader-1","getpresets_wait":false,
   ...}` — **every PR bumps `version`** (1.19, 1.20, …) and appends to `capabilities`; clients key on
   `capabilities`, never on the number. Full shape: `{"version":"1.19","board":"mkr1000","loader":"fram-loader-1","getpresets_wait":false,
   "capabilities":["version","ota"],"usbMode":1,"pollOnStart":0,"reset_cause":"POR|BOD|EXT|SYST|WDT",
-  "uptime_s":N,"rssi":-NN,"tcp_sockets_free":N,"app_crc32":"HEX"}`. `loader` absent when the loader
-  section is not present (dev builds).
+  "uptime_s":N,"rssi":-NN,"tcp_sockets_free":null,"app_crc32":"HEX"}`. `loader` absent when the loader
+  section is not present (dev builds). `tcp_sockets_free` is kept for clients but PR 0 cannot read the
+  WINC's socket table, so it is always `null`; a later PR may fill it.
 - OTA: transfer via existing `/writememory` into scratch from 0; `/ota/commit?len=N&crc32=HEX` →
   checks `busy` first (job running, `"error":"busy"`; never returned by PR 0, which has no background job), then in order `len` (0, odd, > 0x2BD18 (see §5) → `"error":"len"`), image head (word 0 in
   0x20000000..0x20008000, word 1 odd and inside 0x6000..0x40000, app marker at 0x1C with base 0x6000

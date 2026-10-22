@@ -85,8 +85,9 @@ def part_body(part):
 def request(host, port, method, path, body=None, timeout=30, tries=4):
     """One HTTP request. A refused/reset connection is retried (the WPM refreshes its
     listening socket now and then, refusing connections for a few milliseconds); any other
-    error, and a reply that was already being read, are not retried (POST bodies are not
-    idempotent for the WPM's streamed /writememory parser)."""
+    error, and a reply that was already being read, are not retried. Retrying a refused or reset
+    connection is safe because every /writememory element carries its absolute address; the
+    retry exists for the WPM's listener refresh."""
     headers = {}
     if body is not None:
         body = body.encode()

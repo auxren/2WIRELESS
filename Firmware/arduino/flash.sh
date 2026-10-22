@@ -8,7 +8,10 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BOSSAC="$HOME/Library/Arduino15/packages/arduino/tools/bossac/1.7.0-arduino3/bossac"
-EXCLUDE_PORT="/dev/cu.usbmodem192573201"   # a different device on the bench; never touch
+# The bench Mac has another SAMD board on this port; never touch it. Override with WPM_EXCLUDE_PORT
+# (set it to an unused path to exclude nothing).
+EXCLUDE_PORT="${WPM_EXCLUDE_PORT:-/dev/cu.usbmodem192573201}"
+[ -x "$BOSSAC" ] || { echo "error: bossac not found at $BOSSAC (install the arduino:samd core's bossac 1.7.0-arduino3 tool)" >&2; exit 1; }
 
 BIN=""; PORT=""; DRY=0
 for a in "$@"; do

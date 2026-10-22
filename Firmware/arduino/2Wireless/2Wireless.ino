@@ -823,7 +823,7 @@ void setup() {
     // don't continue
     DIAG_HALT();
   }
-  server.begin(); // first listener; loop() re-creates it on each association and every 10 s
+  server.begin(); // first listener; loop() re-creates it on each association and after 10 s idle with a station connected
   DIAG("l0", WiFiSocket.listening(0));
 
   // wait 10 seconds for connection:
