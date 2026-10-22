@@ -31,13 +31,13 @@ Needs `arduino-cli` and `python3`. `build.sh` installs the pinned core `arduino:
   formatter shared by the app, the loader and the desktop tests (`make -C test`).
 - `2Wireless/src/WireByte.{h,cpp}` is the vendored per-byte I2C slave (class `TwoWireByte`, global
   `Wire`); `WireByte.diff` shows the change against the core's `Wire.cpp`. `/getpresets` capture data is
-  served from FRAM per byte through it. Equivalence to the shipped v1.18 behaviour is not yet
-  established (bench B1; see Bench results).
+  served from FRAM per byte through it. Bench B1 (2026-10-22) showed it captures the same 1069 bytes as
+  stock v1.18 from the same 259e bank; see Bench results.
 
 ## Flash over USB
 
 - Put the WPM in USB Device mode and use a data cable (not charge-only). No double-tap of reset is
-  needed (by design, not bench-verified: the touch resets into SAM-BA).
+  needed (the touch resets into SAM-BA; every `flash.sh` upload on the bench used it).
 - Flash the FULL `build/2Wireless/2Wireless.ino.bin` (loader + app). The `.ota.bin` is only for OTA.
 
       ./flash.sh build/2Wireless/2Wireless.ino.bin [port] [--dry-run]
@@ -48,8 +48,9 @@ Needs `arduino-cli` and `python3`. `build.sh` installs the pinned core `arduino:
 - The 1200-baud touch (done by `flash.sh` and by `arduino-cli upload`) erases the flash row at 0x2000
   before resetting into SAM-BA (the Arduino core's `Reset.cpp`). Under this layout that row is the
   loader's first row. By design, SAM-BA then stays resident on the next reset because the app vector
-  is invalid, and the upload rewrites the whole image, so USB recovery is unchanged. This is by design
-  and not bench-verified. Never do the touch without an upload following it.
+  is invalid, and the upload rewrites the whole image, so USB recovery is unchanged (the erase itself
+  was not separately inspected on the bench). `flash.sh` is therefore the only sanctioned way to flash:
+  never do the touch without an upload following it.
 - The bootloader identifies as "v2.0 [Arduino:XYZ] Dec 20 2016".
 - Recovery: the shipped v1.18 binary `2Wireless/bin/2Wireless.ino.bin` is the recovery image and is
   never modified. Put the board in the bootloader and
@@ -104,9 +105,11 @@ Route contract (all replies HTTP 200 with a JSON body):
 - Refusals are HTTP 200 with `{"ok":false,"error":"len|image|crc|busy"}`, never 4xx/5xx.
 
 Other changes in this PR: Wi-Fi bring-up retries three times (`WiFi.end()`, 500 ms, reconfigure) before
-the stock halt, so a software reset with USB attached comes back on Wi-Fi. `server.begin()` is called
-once in `setup()` instead of per association (stock left port 80 closed after association churn). The
-capture counter is reset before each `sendBackupPresets`.
+the stock halt, so a software reset with USB attached comes back on Wi-Fi. The server is re-begun on
+each AP association (as stock does) and also refreshed after 10 s idle: the WINC1500 drops its AP
+listening socket on station re-association while WiFi101 still reports it listening, so a single
+`begin()` in `setup()` left port 80 refused (found on the bench, 2026-10-22). The capture counter is
+reset before each `sendBackupPresets`.
 
 ## /version
 
@@ -148,25 +151,74 @@ Nothing existing changes (design spec section 3):
   protocol are unchanged by design. A `v2/` path prefix keeps its stock meaning on every route (spec
   statement, not yet checked on a device).
 - Boot timing unchanged and "the loader adds well under 1 ms when no OTA is pending" are design targets
-  from the spec, not measurements; B2 and B6 record the real timings.
+  from the spec, not measurements. The bench measured the OTA timings (push ~47 s, verify ~20 s, copy ~1 s
+at full speed), see Bench results.
 - New behaviour arrives only through new routes (`/version`, `/ota/*`). Refusals on new routes are
   HTTP 200 with `{"ok":false,"error":"<code>"}`.
 - `FW_VERSION` is "1.19".
 
 ## Bench results
 
-To be updated after the bench pass. Tasks 1-9 have desktop tests (`make -C test`) and compile clean,
-but the device bench pass is PENDING (the WPM needs a case power cycle). Recorded so far in
-[`bench/RESULTS.md`](bench/RESULTS.md): the Task 1 baseline build flashed and answering, and a Task 2
-(WireByte) run in which `/getpresets` returned data but a second capture after `/setpresets` differed
-from the first (shifted, not byte-identical; whether stock v1.18 does the same is not yet known). The
-stock v1.18 reference run was not completed. Pending, each to be recorded in
-[`bench/RESULTS.md`](bench/RESULTS.md) (it has no entries for them yet):
+Hardware bench run on Oren's WPM (in its 200e case), 2026-10-22. Tables and raw numbers are in
+[`bench/RESULTS.md`](bench/RESULTS.md) (B1-B6) and [`bench/POWERCUT.md`](bench/POWERCUT.md) (power cuts, corruption, recovery, production-loader
+round trip). In order:
 
-- B1: 259e restore reference capture
-- B2: first loader flash and reject-to-jump
-- B3: `/version`, Setup page v1.19 and Wi-Fi churn
-- B4: OTA refusals
-- B5: software-reset bring-up x3
-- B6: OTA round trip A to B to A, with timings
-- Task 10: power-cut, corruption and recovery
+- **Reference capture (B1).** The 259e was restored from the original stock-v1.18 capture; the WireByte
+  build then captured the same 1069 bytes, so the per-byte serving path is equivalent on that bank. The
+  earlier "shifted" second capture was the raw `getpresets` -> `setpresets` round trip re-sending the
+  2-byte line addresses as data (by design; the GetPresets/SetPresets pages de-interleave first), not a
+  WireByte fault.
+- **First loader flash over USB (B2).** The full image verified, the app re-enumerated as the Studio H
+  CDC device and the AP came up.
+- **AP-listener finding and fix.** After one station re-association TCP port 80 was refused although the
+  app was running and WiFi101 still reported the AP listening (`WL_AP_LISTENING`, server listening). The
+  WINC1500 drops its AP-mode listening socket when a station (re)associates while WiFi101 still flags it
+  as listening; stock v1.18 masked this by calling `server.begin()` on each association. The earlier
+  PR 0 change to a single `begin()` in `setup()` was therefore wrong. The fix re-begins the server per
+  association, as stock does, plus a refresh after 10 s idle. After it, 5 join cycles recovered HTTP in
+  about 6 s each (the Mac's association time) and 30/30 polls over 60 s succeeded; the Setup page shows
+  "Firmware v1.19" and `/ssid`, `/`, `/readmemory`, `/currentpreset` are unchanged (B3).
+- **Software-reset bring-up (B5).** Six flash resets with USB attached; the AP came up every time (one
+  Mac join still needed after each reset; the full rejoin script took about 66-67 s in the round trip).
+- **OTA round trip (B6).** A -> B -> A with 113,868-byte variants: push ~47 s (19 POSTs of 6080 B),
+  verify ~19 s, commit reply 2 s, app back about 2 s after the commit, `/version` showed the new build
+  tag and `app_crc32`, `/ota/status` `last` "ok", both directions.
+- **Commit-time refusals (B4 and power-cut bench Step 4).** `len` 0, 1001 and 179482 gave `len`;
+  `len=1000` over the preset bank or over a staged image gave `image` (marker length mismatch); the stock
+  v1.18 head (first 64 bytes at FRAM 0) gave `image`; a valid staged image with `crc32=DEADBEEF` gave
+  `crc`; a staged image with one flipped byte, committed with the original CRC, gave `crc`. The app kept
+  running and `/ota/status` stayed `pending:false` each time.
+- **Six timed power cuts (Steps 1-2).** All six passed: the new app ran and `last` was "ok". Mid-copy cuts
+  re-copied from row 0 on the next boot (LED solid ~20 s after power-on with the 50 ms bench loader,
+  reset cause SYST); late cuts found the record already committed and booted directly (reset cause POR).
+  The bench loader copies at 50 ms per row (~22 s for 445 rows); the production loader takes about 1 s.
+- **Hand-written records (Steps 3 and 4).** A record naming a staged image with a flipped byte gave
+  `last` "crc_mismatch"; a record naming the stock v1.18 head gave `last` "image". Both were rejected
+  before any erase (LED on for under 1 s at most), the old app kept running and `pending` cleared.
+- **USB brick drill (Step 5).** With the first app row (the vector table) zeroed, the unit stayed in
+  SAM-BA: it enumerated as "Arduino MKR1000" (0x2341:0x004E) and HTTP never came up (the 5 Hz blink
+  for 3 s was not watched; the hand-off was seen from the Mac). One `flash.sh` upload recovered the unit,
+  with no 1200-baud touch (it found the bootloader port directly); the staged image was intact.
+- **Production-loader round trip, after the bench.** The untagged production build (loader 8192 B, ota
+  113,892 B) was flashed over USB, updated OTA to variant b and back to the production image; both
+  commits ended `last` "ok" with the expected `app_crc32`, and the production copy took about 1 s.
+
+Not covered by the bench: `busy` is never returned (no background job exists yet); a stock unit's
+`/version` answer (the HTML home page) and the `v2/` prefix behaviour remain spec statements.
+
+### Rerunning the bench
+
+Join the Mac to the WPM AP (BUCHLA200E, interface `en1` in the bench scripts), then from `Firmware/arduino`:
+
+    python3 bench/ota_push.py build/2Wireless/2Wireless.ota.bin --iface en1   # stage + read-back verify, prints the commit URL (never commits)
+    curl --interface en1 '<commit URL>'                                        # commit; the WPM resets
+    bash bench/wifi_rejoin.sh                                                  # after any reset: wait, join, poll until HTTP answers (exit 0 = up)
+
+`bench/wpm.sh get|post <path>` is a curl wrapper bound to `en1`. The cut, corruption and recovery
+procedure is `bench/POWERCUT.md`. Close any serial monitor before `flash.sh`: a reader holding the CDC
+port with DTR asserted defeats the 1200-baud touch and nothing is erased. A USB data cable back-feeds the
+board, so a case power cycle only resets it with USB unplugged.
+
+`./build.sh FramLoader --slow <ms>` builds a loader that waits `<ms>` per row (the power-cut bench used
+50) and regenerates `src/wpm_loader_blob.cpp`. It is a bench artefact: restore the blob afterwards
+(`git checkout 2Wireless/src/wpm_loader_blob.cpp`) and never commit the slow blob.

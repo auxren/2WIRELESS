@@ -7,11 +7,11 @@
   MIDIUSB and USB_Host_Library_SAMD, a `boards.local.txt` overlay for the Studio H USB identity), and
   `flash.sh` uploads over USB with bossac.
 - Vendored `WireByte` (per-byte I2C slave serving); `/getpresets` capture data is served from FRAM per
-  byte. Equivalence to the shipped v1.18 behaviour is not yet established (bench B1); the one recorded
-  device run differed on a second capture, see `Firmware/arduino/bench/RESULTS.md`.
+  byte. Bench B1 (2026-10-22): on the same 259e bank it captures the same 1069 bytes stock v1.18 did.
 - New `GET /version` capability route. `FW_VERSION` is now "1.19".
-- `server.begin()` is called once in `setup()` instead of per association (stock left port 80 closed
-  after association churn). The capture counter is reset before each `sendBackupPresets`.
+- The AP server is re-begun on each association (as stock does) plus a 10 s idle refresh, because the
+  WINC1500 drops its AP listening socket on station re-association while WiFi101 still reports it
+  listening (found on the bench). The capture counter is reset before each `sendBackupPresets`.
 - Wi-Fi bring-up retries three times (`WiFi.end()`, 500 ms, reconfigure) before the stock halt, so a
   software reset with USB attached comes back on Wi-Fi.
 - FRAM-staged OTA: a small loader at flash 0x2000 copies a staged, CRC-checked image from FRAM into the
@@ -57,28 +57,65 @@ staging such an image. `/ota/status` `last` is one of `ok`, `crc_mismatch`, `ima
 The 1200-baud touch (done by `flash.sh` and `arduino-cli upload`, not by bossac itself) erases the flash
 row at 0x2000 before resetting into SAM-BA (Arduino core `Reset.cpp`). By design SAM-BA then stays
 resident, because the vector at 0x2000 is invalid, and the upload rewrites the whole image, so USB
-recovery is unchanged; bench B2 confirms this on the device. Never do the touch without an upload
-following it.
+recovery is unchanged (the erase itself was not separately inspected on the bench). `flash.sh` is the
+only sanctioned flashing path; never do the touch without an upload following it.
 
 ## What was bench-tested
 
-To be updated after the bench pass. Tasks 1-9 have desktop tests (`make -C Firmware/arduino/test`) and
-compile clean. The device bench pass is PENDING: the WPM needs a case power cycle that only the owner can
-do. See [`Firmware/arduino/bench/RESULTS.md`](../../Firmware/arduino/bench/RESULTS.md) for everything
-actually recorded (a Task 1 baseline flash, and an incomplete Task 2 WireByte run whose second capture
-after `/setpresets` was not byte-identical to the first; the stock v1.18 reference run was not completed).
+Desktop tests (`make -C Firmware/arduino/test`) pass and the tree compiles clean. The device bench ran on
+Oren's WPM in its 200e case on 2026-10-22; tables are in
+[`Firmware/arduino/bench/RESULTS.md`](../../Firmware/arduino/bench/RESULTS.md) (B1-B6) and
+[`Firmware/arduino/bench/POWERCUT.md`](../../Firmware/arduino/bench/POWERCUT.md). In order:
 
-Pending device items:
+- **Reference capture (B1).** The 259e was restored from the original stock-v1.18 capture; the WireByte
+  build then captured the same 1069 bytes, so the per-byte serving path is equivalent on that bank. The
+  earlier "shifted" second capture was the raw `getpresets` -> `setpresets` round trip re-sending the
+  2-byte line addresses as data (by design; the GetPresets/SetPresets pages de-interleave first), not a
+  WireByte fault.
+- **First loader flash over USB (B2).** The full image verified, the app re-enumerated as the Studio H
+  CDC device and the AP came up.
+- **AP-listener finding and fix.** After one station re-association TCP port 80 was refused although the
+  app was running and WiFi101 still reported the AP listening (`WL_AP_LISTENING`, server listening). The
+  WINC1500 drops its AP-mode listening socket when a station (re)associates while WiFi101 still flags it
+  as listening; stock v1.18 masked this by calling `server.begin()` on each association. The earlier
+  PR 0 change to a single `begin()` in `setup()` was therefore wrong. The fix re-begins the server per
+  association, as stock does, plus a refresh after 10 s idle. After it, 5 join cycles recovered HTTP in
+  about 6 s each (the Mac's association time) and 30/30 polls over 60 s succeeded; the Setup page shows
+  "Firmware v1.19" and `/ssid`, `/`, `/readmemory`, `/currentpreset` are unchanged (B3).
+- **Software-reset bring-up (B5).** Six flash resets with USB attached; the AP came up every time (one
+  Mac join still needed after each reset; the full rejoin script took about 66-67 s in the round trip).
+- **OTA round trip (B6).** A -> B -> A with 113,868-byte variants: push ~47 s (19 POSTs of 6080 B),
+  verify ~19 s, commit reply 2 s, app back about 2 s after the commit, `/version` showed the new build
+  tag and `app_crc32`, `/ota/status` `last` "ok", both directions.
+- **Commit-time refusals (B4 and power-cut bench Step 4).** `len` 0, 1001 and 179482 gave `len`;
+  `len=1000` over the preset bank or over a staged image gave `image` (marker length mismatch); the stock
+  v1.18 head (first 64 bytes at FRAM 0) gave `image`; a valid staged image with `crc32=DEADBEEF` gave
+  `crc`; a staged image with one flipped byte, committed with the original CRC, gave `crc`. The app kept
+  running and `/ota/status` stayed `pending:false` each time.
+- **Six timed power cuts (Steps 1-2).** All six passed: the new app ran and `last` was "ok". Mid-copy cuts
+  re-copied from row 0 on the next boot (LED solid ~20 s after power-on with the 50 ms bench loader,
+  reset cause SYST); late cuts found the record already committed and booted directly (reset cause POR).
+  The bench loader copies at 50 ms per row (~22 s for 445 rows); the production loader takes about 1 s.
+- **Hand-written records (Steps 3 and 4).** A record naming a staged image with a flipped byte gave
+  `last` "crc_mismatch"; a record naming the stock v1.18 head gave `last` "image". Both were rejected
+  before any erase (LED on for under 1 s at most), the old app kept running and `pending` cleared.
+- **USB brick drill (Step 5).** With the first app row (the vector table) zeroed, the unit stayed in
+  SAM-BA: it enumerated as "Arduino MKR1000" (0x2341:0x004E) and HTTP never came up (the 5 Hz blink
+  for 3 s was not watched; the hand-off was seen from the Mac). One `flash.sh` upload recovered the unit,
+  with no 1200-baud touch (it found the bootloader port directly); the staged image was intact.
+- **Production-loader round trip, after the bench.** The untagged production build (loader 8192 B, ota
+  113,892 B) was flashed over USB, updated OTA to variant b and back to the production image; both
+  commits ended `last` "ok" with the expected `app_crc32`, and the production copy took about 1 s.
 
-- B1: 259e restore reference capture
-- B2: first loader flash and reject-to-jump
-- B3: `/version` and Setup page v1.19 and Wi-Fi churn
-- B4: OTA refusals
-- B5: software-reset bring-up x3
-- B6: OTA round trip A to B to A, with timings
-- Task 10: power-cut, corruption and recovery
+Not covered by the bench / still true:
 
-No device result is claimed for any of these.
+- `busy` is never returned by PR 0 (`wpm_ota_busy()` is hard-coded false; no bus jobs exist yet).
+- A raw `/getpresets` -> `/setpresets` round trip shifts a bank by design (the capture stream is
+  `[addr16][data]` per bus line and a restore feeds FRAM verbatim); the Get/Set pages de-interleave.
+- The 1200-baud touch erases the loader's first row, so `flash.sh` (touch followed by upload) is the only
+  sanctioned flashing path.
+- `build.sh FramLoader --slow <ms>` is a bench artefact and is never committed.
+- A stock unit's `/version` answer and the `v2/` prefix behaviour are spec statements, not device-checked.
 
 ## How to reproduce
 
@@ -98,7 +135,8 @@ OTA, with the Mac joined to the WPM AP (BUCHLA200E):
     ./wpm.sh get version
     ./wpm.sh get ota/status
 
-The full A to B to A procedure is in `Firmware/arduino/bench/RESULTS.md` (Task 9).
+The A to B to A results are in `Firmware/arduino/bench/RESULTS.md` (B6) and the power-cut procedure in
+`Firmware/arduino/bench/POWERCUT.md`.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
