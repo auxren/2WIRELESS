@@ -95,18 +95,3 @@ listener refresh hit the back-to-back reads; now refreshed only when idle, and o
 Bench hazard: a process holding the CDC port with DTR asserted defeats the 1200-baud touch (the
 firmware resets only on 1200 baud with DTR dropped); flash.sh then reports "bootloader port did not
 appear within 10 s" and nothing is erased. Close serial readers before flashing.
-
-### Task 2 bench, second session (after Oren power-cycled the case; AP joinable)
-
-Captures (hex data, 1069 bytes each; module 259e at 0x28). Each setpresets round trip changes the stored data:
-the same module+WPM drift happens with the stock v1.18 binary, so it is not specific to WireByte.
-
-    new build : cap1 = A  (starts 0000fff06ea0...)       setpresets -> cap2 = B (starts 00000000fff06ea0...)
-    stock 1.18: cap1 = B' (starts 00000000fff06ea0...)    setpresets -> cap2 = C (starts 000000000000fff06ea0...)
-    B' == B (byte-identical): the state the new build wrote is exactly what stock's first capture read back.
-    The new build's A -> B step and stock's B -> C step both prepend 2 zero bytes (the stored preset data drifts
-    by 2 bytes per restore in both builds).
-
-Not tested: new vs stock from an identical starting state (FRAM cannot be reset to a known state without a
-clean-state image); so "identical between builds" is shown only structurally (same drift, same capture B).
-Final device state: new build (crc C494FF32) flashed again.
