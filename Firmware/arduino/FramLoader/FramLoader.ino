@@ -4,8 +4,8 @@
 //
 // Boot: read the 18-byte OTA record from FRAM. If an update is pending, verify
 // the staged image CRC, copy it row by row to flash from 0x6000, verify the
-// flash CRC, record the result and reset. Otherwise jump to the application,
-// or blink the LED at 5 Hz if the application vectors are not plausible.
+// flash CRC, record the result and reset. Otherwise jump to the application, or, if the
+// application vectors are not plausible, blink the LED at 5 Hz for 3 s and enter SAM-BA.
 // record.flags is the retry counter: the application writes flags=0 whenever it
 // commits a new pending record; the loader increments it after each failed
 // flash verify and gives up (last_result=2, magic cleared) at WPM_LOADER_MAX_TRIES.
@@ -82,14 +82,26 @@ static bool flash_app_ok() {
   }
 }
 
-[[noreturn]] static void blink_forever() {
+// No plausible application: blink at 5 Hz for 3 s so the fault is visible, then hand the
+// unit to the SAM-BA bootloader the way the core's 1200-baud touch does (the double-tap
+// magic word survives a system reset; the bootloader then stays resident and enumerates its
+// USB port), so a USB upload recovers the unit without reaching the reset button. On a
+// power-on reset the bootloader clears the magic, so each power-up repeats blink + hand-off.
+#define BOOT_DOUBLE_TAP_ADDRESS (0x20007FFCul)
+#define DOUBLE_TAP_MAGIC 0x07738135
+[[noreturn]] static void blink_then_bootloader() {
   fram_end();
   pinMode(LED_BUILTIN, OUTPUT);
-  for (;;) {  // 5 Hz: 100 ms on, 100 ms off
+  for (int i = 0; i < 15; i++) {  // 5 Hz: 100 ms on, 100 ms off, 3 s
     digitalWrite(LED_BUILTIN, HIGH);
     delay(100);
     digitalWrite(LED_BUILTIN, LOW);
     delay(100);
+  }
+  __disable_irq();
+  *(volatile uint32_t*)BOOT_DOUBLE_TAP_ADDRESS = DOUBLE_TAP_MAGIC;
+  NVIC_SystemReset();
+  for (;;) {
   }
 }
 
@@ -153,7 +165,7 @@ void setup() {
   switch (wpm_loader_decide(r.pending, flash_app_ok())) {
     case WPM_LOADER_COPY: do_copy(r); break;
     case WPM_LOADER_JUMP: jump_to_app(); break;
-    default: blink_forever(); break;
+    default: blink_then_bootloader(); break;
   }
 }
 

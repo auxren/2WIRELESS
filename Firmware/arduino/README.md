@@ -69,7 +69,10 @@ reserved for new state) and resets the WPM. On the next boot the loader at 0x200
 checks CRC32 over FRAM `[0..len)`, erases and writes flash from 0x6000 in 256-byte rows, verifies the
 flash CRC, clears the magic, records the result and jumps to the app. A bad CRC clears the magic and
 boots the existing app. The loader never erases itself, so a power cut re-runs the copy on the next boot;
-if the flash verify fails, the copy is retried at most 3 times.
+if the flash verify fails, the copy is retried at most 3 times. If flash holds no plausible app (the
+vector check fails), the loader blinks the LED at 5 Hz for 3 s and then hands the unit to the SAM-BA
+bootloader (double-tap magic + reset), so the "Arduino MKR1000" USB port appears and one `flash.sh`
+upload recovers it without reaching the reset button; each power-up repeats the blink and hand-off.
 
 `bench/ota_push.py <file.ota.bin>` stages and read-back-verifies an image and prints the commit URL; it
 never calls `/ota/commit`.

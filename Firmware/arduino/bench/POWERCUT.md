@@ -10,7 +10,9 @@ set it once: `W=Firmware/arduino/bench/wpm.sh`.
 - After any reset the Mac must join BUCHLA200E once: `bash Firmware/arduino/bench/wifi_rejoin.sh`
   (60 s wait, join, polls up to 90 s). "Up" below means this script exited 0.
 - LED during a loader run: solid on from the moment the loader starts the copy until it jumps to the
-  app (about 1 s after reset plus the copy). 5 Hz blink means no valid app (loader refuses to jump).
+  app (about 1 s after reset plus the copy). A 5 Hz blink for 3 s followed by LED off means no valid
+  app: the loader hands the unit to the SAM-BA bootloader (USB port "Arduino MKR1000" appears if USB is
+  attached; each power-up repeats blink + hand-off).
   Slow loader copy time = 445 rows x 50 ms, about 22 s. The CRC passes and the record writes are
   milliseconds each.
 - OTA record: 18 bytes at FRAM 0x02BE50 (`"OTA1"`, len LE32, crc32 LE32, flags, last_result, app_crc32 LE32).
@@ -114,11 +116,14 @@ $W post /writememory '[{"addr":"2be50","data":"4f5441310010000011001cc7000000000
 
 Owner power-cycles (USB out). Expected: loader copies 4 KB of zeros (LED solid about 1 s), verifies
 the flash CRC (ok), writes `last:"ok"`, resets; then `flash_app_ok()` fails (zero vectors) so the
-LED **blinks at 5 Hz forever** and HTTP never answers. Owner confirms the blink.
-Recover: plug USB data in, close any serial reader, then
+LED **blinks at 5 Hz for 3 s**, then the loader resets into SAM-BA (LED off, HTTP never answers).
+Owner confirms the blink. Recover: plug USB data in (the bootloader port 0x2341 "Arduino MKR1000"
+enumerates; `ls /dev/cu.usbmodem*`), close any serial reader, then
 `bash Firmware/arduino/flash.sh Firmware/arduino/2Wireless/bin/2Wireless.ino.bin` (shipped v1.18) or the
 branch's `build/2Wireless/2Wireless.ino.bin` (this rewrites the loader slot as well, with the slow loader
-if that is what is in `build/`). Expected: back in one upload, `wifi_rejoin.sh` OK, `/version` correct.
+if that is what is in `build/`). flash.sh finds the bootloader port and skips the touch. Expected: back
+in one upload, `wifi_rejoin.sh` OK, `/version` correct. If USB was unplugged during the hand-off, plug
+it in and power-cycle once (POR clears the magic; the loader blinks 3 s and hands off again).
 
 ## Results (controller fills in)
 

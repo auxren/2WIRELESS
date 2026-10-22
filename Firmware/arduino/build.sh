@@ -23,6 +23,7 @@ done
 if [ -n "$SLOW" ]; then
   [ "$SKETCH" = "FramLoader" ] || { echo "error: --slow applies only to the FramLoader sketch" >&2; exit 2; }
   case "$SLOW" in ''|*[!0-9]*) echo "error: --slow must be a number of milliseconds" >&2; exit 2 ;; esac
+  SLOW=$((10#$SLOW))   # never pass a leading zero to the compiler (octal)
 fi
 
 if [ -z "$PROFILE" ]; then

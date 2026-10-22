@@ -154,7 +154,10 @@ Decided with the app session: route shapes in §6. The rest are the builder-side
   last_result(1) app_crc32(4)`; the loader verifies CRC32 (zlib polynomial, as `Buchla200eCrc32`) over
   FRAM `[0..len)`, erases/writes flash from **0x6000** in 256-byte rows, verifies the flash CRC, clears
   the magic, sets `last_result`, jumps. Non-matching CRC → clears the magic, sets
-  `last_result = crc_mismatch`, boots the existing app. **Maximum `len` = 0x2BD18** (179,480 bytes):
+  `last_result = crc_mismatch`, boots the existing app. No plausible app in flash (vectors fail the
+  sanity check below) → the loader blinks the LED at 5 Hz for 3 s, then writes the SAM-BA double-tap
+  magic (0x07738135 at 0x20007FFC) and resets, so the stock bootloader stays resident with its USB
+  port and one bossac upload recovers the unit without reaching the reset button. **Maximum `len` = 0x2BD18** (179,480 bytes):
   the FRAM scratch area, so a staged image can never reach the SSID/password, settings or the record
   itself (it is also below the flash app region's 0x3A000). The image sanity check is: word 0 in
   0x20000000..0x20008000, word 1 odd and inside 0x6000..0x40000.
