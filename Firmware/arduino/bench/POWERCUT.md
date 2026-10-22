@@ -161,3 +161,7 @@ blinks 3 s and hands off again).
 | 4 | stock record power cycle | power cycle | none seen (reject within ms) | stock v1.18 head at FRAM 0, record OTA1/108612/0 written by hand, pending:true; after the cycle: image / unknown / a, reset_cause SYST (13:18); abort -> none | PASS |
 | 5 | brick (USB) | n/a | not watched (owner away); hand-off seen from the Mac | brick.ino.bin (bench-slow-a, app row 0 zeroed) flashed 12:16:11; from 12:16:17 the unit enumerated as "Arduino MKR1000" 0x2341:0x004E and stayed; HTTP never came up | PASS |
 | 5 | recovery | n/a | app up | flash.sh bench-slow-a found the bootloader port (no touch), verify OK; app answered on build a after a second join (wifi_rejoin timed out once at 162 s); status none; staged B marker intact | PASS |
+
+## Step 6 result: production loader round trip (2026-10-22 13:14-13:22)
+
+Production build (untagged, loader 8192 B crc32 FCF09B1B, image 130276 B crc32 27DF365F, ota 113892 B crc32 27D00D24) flashed over USB; `/version` shows no build tag. OTA to variant b: commit 13:17:27, app up at the first poll after rejoin, `last:"ok"`, app_crc32 0A53CC0E, build b. OTA back to the production image: commit 13:20:01, `last:"ok"`, app_crc32 27D00D24, no build tag. Copy time at full speed is about 1 s (445 rows). PASS.
