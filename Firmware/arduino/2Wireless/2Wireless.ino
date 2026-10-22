@@ -746,7 +746,14 @@ void setup() {
   DEBUG_PRINTLN("Access Point Web Server");
   #endif
 
-  // check for the presence of the shield:
+  // check for the presence of the shield. After a software reset the WINC1500 stays
+  // powered; WiFi.end() clears the driver's init flag so the next status() re-inits
+  // (and resets) the chip. Retry before giving up.
+  for (int attempt = 0; attempt < 3; attempt++) {
+    if (WiFi.status() != WL_NO_SHIELD) break;
+    WiFi.end();
+    delay(500);
+  }
   if (WiFi.status() == WL_NO_SHIELD) {
     DEBUG_PRINTLN("WiFi shield not present");
     // don't continue
@@ -776,10 +783,20 @@ void setup() {
 
   // Create open network. Change this line if you want to create an WEP network:
   //2WIRELESS added pass
-  if (digitalRead(WIFI_OPEN_PIN) || (sizeof(pass) < 8)) {
-    status = WiFi.beginAP(ssid);
-  } else {
-    status = WiFi.beginAP(ssid,pass);
+  // Up to 3 attempts: the first runs the stock sequence unchanged; a retry (after a
+  // software reset left the WINC with the old AP running) tears down and reconfigures.
+  for (int attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) {
+      WiFi.end();
+      delay(500);
+      WiFi.config(IPAddress(192, 168, 0, 1));
+    }
+    if (digitalRead(WIFI_OPEN_PIN) || (sizeof(pass) < 8)) {
+      status = WiFi.beginAP(ssid);
+    } else {
+      status = WiFi.beginAP(ssid,pass);
+    }
+    if (status == WL_AP_LISTENING) break;
   }
   
   if (status != WL_AP_LISTENING) {
