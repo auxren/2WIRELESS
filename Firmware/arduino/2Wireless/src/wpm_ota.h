@@ -10,5 +10,5 @@ void wpm_ota_handle_abort(WiFiClient& client);
 // urlString: "...GET /ota/commit?len=N&crc32=HEX ...".
 void wpm_ota_handle_commit(WiFiClient& client, const String& urlString);
 
-// True while another job owns the FRAM staging area. Always false in PR 0.
+// True while another job owns the FRAM staging area. True while a bus scan is running.
 bool wpm_ota_busy();

@@ -3,7 +3,7 @@
 #include <Arduino.h>
 #include <stdint.h>
 
-#define FW_VERSION "1.19"
+#define FW_VERSION "1.20"
 
 // True when a plausible first-stage loader vector table sits at flash 0x2000.
 bool wpm_loader_present();

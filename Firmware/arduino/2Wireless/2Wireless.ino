@@ -14,6 +14,7 @@
 #include "src/wpm_loader_blob.h" // first-stage FRAM loader, linked into .sketch_boot (0x2000)
 #include "src/wpm_version.h"
 #include "src/wpm_ota.h"
+#include "src/wpm_bus.h"
 #include "src/wpm_json.h"
 #include <WiFi101.h>
 #include <SPI.h>
@@ -866,6 +867,7 @@ void loop() {
 #ifdef WPM_DIAG
   diagDump();
 #endif
+  wpm_bus_loop();
   // compare the previous status to the current status
   if (status != WiFi.status()) {
     // it has changed update the variable
@@ -1375,6 +1377,7 @@ void receiveEvent(int howMany) {
       }
     } else {
       if (Wire.available() > 4) {
+        wpm_bus_note_frame();
         int command = 0;
         command = command + (Wire.read() << 24);
         command = command + (Wire.read() << 16);
@@ -1402,10 +1405,14 @@ void receiveEvent(int howMany) {
           String moduleVersion = "";
           moduleVersion = moduleVersion + char(moduleAddr); //Store only address and version to fram
           int byteCount=0;
+          uint8_t ver7[7];
           while (byteCount < 7) {
-            moduleVersion = moduleVersion + char(Wire.read());
+            uint8_t vb = Wire.read();
+            ver7[byteCount] = vb;
+            moduleVersion = moduleVersion + char(vb);
             byteCount++;
           } 
+          wpm_bus_on_version_frame(moduleAddr, ver7);
           setDisplayMessage(0,moduleVersion);
         }
         Wire.flush();
@@ -1549,6 +1556,36 @@ void sendQuery(byte address) {
         Wire.endTransmission();
         switchToSlave();
     }
+}
+
+// Bus-scan helpers: like sendQuery()/sendPollingComplete() but report whether the master send began.
+bool wpm_bus_master_query(uint8_t address) {
+    if (v2version) return false; //Query is not supported
+    if (masterBeginTransmission(0) != 0) return false;
+    Wire.write(0x04);
+    Wire.write(address);
+    Wire.write(0x22);
+    Wire.write(0x1A);
+    Wire.write(0xFF);
+    Wire.endTransmission();
+    switchToSlave();
+    return true;
+}
+
+bool wpm_bus_master_polldone() {
+    if (masterBeginTransmission(0) != 0) return false;
+    if (v2version) {
+        Wire.write(0x14);
+    } else {
+        Wire.write(0x04);
+        Wire.write(0x00);
+        Wire.write(0x22);
+        Wire.write(0x14);
+        Wire.write(0xFF);
+    }
+    Wire.endTransmission();
+    switchToSlave();
+    return true;
 }
 
 void sendSavePreset(byte preset) {
@@ -2208,6 +2245,9 @@ void handleWifiRequest(WiFiClient client, String urlString){
     DEBUG_HTTP_PRINTHEXLN(midiMessage.byte3);
     processMidiMessage(midiMessage);
   }
+  else if (urlString.indexOf("/getpresets?addr") >= 0 && wpm_bus_scan_active()) {
+    wpm_send_json(client, wpm_json_err("busy")); //bus scan owns the bus
+  }
   else if (urlString.indexOf("/getpresets?addr") >= 0) {
     writeHeader(client,"HTTP/1.1 200 OK","Content-type:text/json",-1); //-1 is chunked encoding
     DEBUG_PRINTLN("Get Presets Received"); 
@@ -2266,6 +2306,8 @@ void handleWifiRequest(WiFiClient client, String urlString){
     client.println("0");
     client.println();
     write_i2c_to_fram = false; //Stop Caching incoming i2c to FRAM 
+  } else if (urlString.indexOf("/setpresets?addr") >= 0 && wpm_bus_scan_active()) {
+    wpm_send_json(client, wpm_json_err("busy")); //bus scan owns the bus
   } else if (urlString.indexOf("/setpresets?addr") >= 0) {
     writeHeader(client,"HTTP/1.1 200 OK","Content-type:text/plain",0);
     DEBUG_PRINTLN("Set Presets Received"); 
@@ -2806,6 +2848,14 @@ void handleWifiRequest(WiFiClient client, String urlString){
       tmp = setupPageString.substring(i,i+500);
     }
     client.println();   // The HTTP response ends with another blank line:
+  } else if (urlString.indexOf("/bus/scan/status") >= 0) {
+    wpm_bus_handle_scan_status(client);
+  } else if (urlString.indexOf("/bus/scan") >= 0) {
+    wpm_bus_handle_scan(client, urlString);
+  } else if (urlString.indexOf("/bus/status") >= 0) {
+    wpm_bus_handle_status(client);
+  } else if (urlString.indexOf("/bus/polldone") >= 0) {
+    wpm_bus_handle_polldone(client);
   } else if (urlString.indexOf("/ota/status") >= 0) {
     wpm_ota_handle_status(client);
   } else if (urlString.indexOf("/ota/abort") >= 0) {

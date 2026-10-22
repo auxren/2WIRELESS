@@ -8,10 +8,10 @@
 int main() {
   // Full fixture: loader present, app crc known.
   {
-    WpmVersionInfo info = {"1.19", "mkr1000", "fram-loader-1", "POR", 42u, -50, 1, 0, true, 0x0A1B2C3Du, nullptr};
+    WpmVersionInfo info = {"1.20", "mkr1000", "fram-loader-1", "POR", 42u, -50, 1, 0, true, 0x0A1B2C3Du, nullptr};
     const char* want =
-        "{\"version\":\"1.19\",\"board\":\"mkr1000\",\"loader\":\"fram-loader-1\","
-        "\"capabilities\":[\"version\",\"ota\"],\"getpresets_wait\":false,\"usbMode\":1,"
+        "{\"version\":\"1.20\",\"board\":\"mkr1000\",\"loader\":\"fram-loader-1\","
+        "\"capabilities\":[\"version\",\"ota\",\"bus\"],\"getpresets_wait\":false,\"usbMode\":1,"
         "\"pollOnStart\":0,\"reset_cause\":\"POR\",\"uptime_s\":42,\"rssi\":-50,"
         "\"tcp_sockets_free\":null,\"app_crc32\":\"0A1B2C3D\"}";
     char buf[512];
@@ -29,10 +29,10 @@ int main() {
 
   // No loader, unknown app crc: loader key absent, "unknown" crc.
   {
-    WpmVersionInfo info = {"1.19", "mkr1000", nullptr, "WDT", 4000000000u, 0, 0, 1, false, 0xFFFFFFFFu, nullptr};
+    WpmVersionInfo info = {"1.20", "mkr1000", nullptr, "WDT", 4000000000u, 0, 0, 1, false, 0xFFFFFFFFu, nullptr};
     const char* want =
-        "{\"version\":\"1.19\",\"board\":\"mkr1000\","
-        "\"capabilities\":[\"version\",\"ota\"],\"getpresets_wait\":false,\"usbMode\":0,"
+        "{\"version\":\"1.20\",\"board\":\"mkr1000\","
+        "\"capabilities\":[\"version\",\"ota\",\"bus\"],\"getpresets_wait\":false,\"usbMode\":0,"
         "\"pollOnStart\":1,\"reset_cause\":\"WDT\",\"uptime_s\":4000000000,\"rssi\":0,"
         "\"tcp_sockets_free\":null,\"app_crc32\":\"unknown\"}";
     char buf[512];
@@ -41,10 +41,10 @@ int main() {
   }
   // Tagged build: "build" key right after "version"; empty tag is omitted.
   {
-    WpmVersionInfo info = {"1.19", "mkr1000", "fram-loader-1", "POR", 42u, -50, 1, 0, true, 0x0A1B2C3Du, "b"};
+    WpmVersionInfo info = {"1.20", "mkr1000", "fram-loader-1", "POR", 42u, -50, 1, 0, true, 0x0A1B2C3Du, "b"};
     const char* want =
-        "{\"version\":\"1.19\",\"build\":\"b\",\"board\":\"mkr1000\",\"loader\":\"fram-loader-1\","
-        "\"capabilities\":[\"version\",\"ota\"],\"getpresets_wait\":false,\"usbMode\":1,"
+        "{\"version\":\"1.20\",\"build\":\"b\",\"board\":\"mkr1000\",\"loader\":\"fram-loader-1\","
+        "\"capabilities\":[\"version\",\"ota\",\"bus\"],\"getpresets_wait\":false,\"usbMode\":1,"
         "\"pollOnStart\":0,\"reset_cause\":\"POR\",\"uptime_s\":42,\"rssi\":-50,"
         "\"tcp_sockets_free\":null,\"app_crc32\":\"0A1B2C3D\"}";
     char buf[512];

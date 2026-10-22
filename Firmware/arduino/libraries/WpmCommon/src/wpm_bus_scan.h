@@ -53,6 +53,7 @@ class WpmBusScan {
   const WpmScanFound* found() const { return found_; }
   WpmBusError last_error() const { return err_; }
   void clear_error() { err_ = WPM_BUS_ERR_NONE; }
+  void set_error(WpmBusError e) { err_ = e; }  // device-side routes (args parse, polldone send failure)
   uint32_t stray_replies() const { return stray_; }
   uint32_t reply_ms() const { return reply_ms_; }
 
