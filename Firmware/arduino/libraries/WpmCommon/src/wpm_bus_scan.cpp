@@ -14,6 +14,7 @@ WpmBusError WpmBusScan::start(uint8_t first, uint8_t last, uint32_t now_ms, uint
   }
   window_ = false;
   mb_full = false;
+  mb_ack = false;
   stray_ = 0;
   err_ = WPM_BUS_ERR_NONE;
   first_ = first;
@@ -31,22 +32,27 @@ WpmBusError WpmBusScan::start(uint8_t first, uint8_t last, uint32_t now_ms, uint
 WpmScanAction WpmBusScan::step(uint32_t now_ms) {
   if (state_ != WPM_SCAN_SCANNING) return WPM_SCAN_ACT_NONE;
   if (phase_ == PH_WAIT) {
-    if (mb_full) {
+    bool expired = now_ms - phase_start_ >= reply_ms_;
+    // A version frame ends the wait at once. An ACK alone waits out the window so a version
+    // frame arriving after it can still fill the entry.
+    if (mb_full || (mb_ack && expired)) {
       if (count_ < WPM_SCAN_MAX_FOUND) {
         WpmScanFound& f = found_[count_++];
         f.addr = addr_;
-        uint8_t n = mb_len;
+        uint8_t n = mb_full ? mb_len : 0;
         if (n > WPM_SCAN_VER_LEN) n = WPM_SCAN_VER_LEN;
         f.ver_valid = (n == WPM_SCAN_VER_LEN);
+        f.ver_src = f.ver_valid ? WPM_VER_SRC_FRAME : WPM_VER_SRC_NONE;
         for (size_t i = 0; i < WPM_SCAN_VER_LEN; i++) f.ver[i] = i < n ? static_cast<char>(mb_ver[i]) : ' ';
       }
       window_ = false;
       mb_full = false;
+      mb_ack = false;
       phase_ = PH_GAP;
       phase_start_ = now_ms;
       return WPM_SCAN_ACT_NONE;
     }
-    if (now_ms - phase_start_ >= reply_ms_) {
+    if (expired) {
       window_ = false;
       phase_ = PH_GAP;
       phase_start_ = now_ms;
@@ -65,6 +71,7 @@ WpmScanAction WpmBusScan::step(uint32_t now_ms) {
     return WPM_SCAN_ACT_NONE;
   }
   mb_full = false;
+  mb_ack = false;
   phase_ = PH_WAIT;
   phase_start_ = now_ms;
   window_ = true;
@@ -77,6 +84,14 @@ void WpmBusScan::query_failed(uint32_t now_ms) {
   window_ = false;
   phase_ = PH_GAP;
   phase_start_ = now_ms;
+}
+
+void WpmBusScan::on_query_reply(uint8_t from_addr) {
+  if (!window_ || mb_ack || from_addr != addr_) {
+    stray_ = stray_ + 1;
+    return;
+  }
+  mb_ack = true;
 }
 
 void WpmBusScan::on_version_frame(uint8_t from_addr, const uint8_t* ver, size_t n) {
@@ -99,8 +114,12 @@ const char* wpm_scan_state_str(WpmScanState s) {
   }
 }
 
+const char* wpm_scan_ver_src_str(uint8_t src) {
+  return src == WPM_VER_SRC_FRAME ? "frame" : src == WPM_VER_SRC_CACHE ? "cache" : "none";
+}
+
 size_t wpm_scan_entry_json(const WpmScanFound& f, char* buf, size_t n) {
-  char tmp[80];
+  char tmp[112];
   size_t p = 0;
   int w = std::snprintf(tmp, sizeof tmp, "{\"addr\":\"%02x\",\"ver_valid\":%s,\"version\":\"",
                         static_cast<unsigned>(f.addr), f.ver_valid ? "true" : "false");
@@ -118,8 +137,9 @@ size_t wpm_scan_entry_json(const WpmScanFound& f, char* buf, size_t n) {
     }
   }
   tmp[p++] = '"';
-  tmp[p++] = '}';
-  tmp[p] = '\0';
+  w = std::snprintf(tmp + p, sizeof tmp - p, ",\"ver_src\":\"%s\"}", wpm_scan_ver_src_str(f.ver_src));
+  if (w < 0) return 0;
+  p += static_cast<size_t>(w);
   if (p + 1 > n) return 0;
   std::memcpy(buf, tmp, p + 1);
   return p;

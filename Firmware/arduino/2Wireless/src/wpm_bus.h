@@ -10,6 +10,8 @@ void wpm_bus_loop();  // call once per loop() pass (main loop only)
 void wpm_bus_on_version_frame(uint8_t addr, const uint8_t ver[7]);
 // ISR: call for every >4-byte slave frame; feeds /bus/status bus_quiet and dialect.
 void wpm_bus_note_frame();
+// ISR: the module's 0x1C identity ACK (04 22|00 <addr> 1C FF), the real reply to QUERY.
+void wpm_bus_on_query_reply(uint8_t addr);
 bool wpm_bus_scan_active();  // scan state == SCANNING
 
 // urlString: "...GET /bus/scan?first=HH&last=HH&window=MS ...".

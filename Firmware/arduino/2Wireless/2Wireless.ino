@@ -1383,6 +1383,8 @@ void receiveEvent(int howMany) {
         command = command + (Wire.read() << 16);
         command = command + (Wire.read() << 8);
         command = command + Wire.read();
+        //Module identity ACK (reply to QUERY): 04 22|00 <module addr> 1C FF
+        if (((command >> 24) & 0xFF) == 0x04 && (command & 0xFF) == 0x1C) wpm_bus_on_query_reply((command >> 8) & 0xFF);
         DEBUG_PRINTHEXLN(command);
         if (((command & MIDI_EVENT) == MIDI_EVENT) && getSendMidiToUsb()){
           //clock messages

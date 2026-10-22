@@ -9,6 +9,8 @@ static void reply(WpmBusScan& s, uint8_t a, const char* v, size_t n = 7) {
   s.on_version_frame(a, reinterpret_cast<const uint8_t*>(v), n);
 }
 
+static void ack(WpmBusScan& s, uint8_t a) { s.on_query_reply(a); }
+
 int main() {
   {  // start_rejects_bad_args
     WpmBusScan s;
@@ -31,21 +33,22 @@ int main() {
     CHECK(s.start(0x28, 0x29, 0) == WPM_BUS_ERR_BUSY);
     CHECK(s.last_error() == WPM_BUS_ERR_BUSY);
   }
-  {  // single_address_answers
+  {  // single_address_answers (identity ACK)
     WpmBusScan s;
     s.start(0x28, 0x28, 1000);
     CHECK(s.step(1000) == WPM_SCAN_ACT_QUERY);
     CHECK(s.current_addr() == 0x28);
     CHECK(s.step(1100) == WPM_SCAN_ACT_NONE);
-    reply(s, 0x28, "31.0   ");
-    CHECK(s.step(1150) == WPM_SCAN_ACT_NONE);
-    CHECK(s.state() == WPM_SCAN_SCANNING);
-    CHECK(s.step(1150 + 150) == WPM_SCAN_ACT_NONE);
-    CHECK(s.state() == WPM_SCAN_DONE);
+    ack(s, 0x28);
+    CHECK(s.step(1150) == WPM_SCAN_ACT_NONE);  // ACK alone waits out the window
+    CHECK(s.count() == 0);
+    CHECK(s.step(1300) == WPM_SCAN_ACT_NONE);
     CHECK(s.count() == 1);
+    CHECK(s.state() == WPM_SCAN_SCANNING);
+    CHECK(s.step(1300 + 150) == WPM_SCAN_ACT_NONE);
+    CHECK(s.state() == WPM_SCAN_DONE);
     CHECK(s.found()[0].addr == 0x28);
-    CHECK(s.found()[0].ver_valid);
-    CHECK(std::memcmp(s.found()[0].ver, "31.0   ", 7) == 0);
+    CHECK(!s.found()[0].ver_valid);
     CHECK(s.idx() == 1);
     CHECK(s.reply_ms() == 300);
   }
@@ -84,9 +87,9 @@ int main() {
     s.step(300);
     CHECK(s.step(450) == WPM_SCAN_ACT_QUERY);
     CHECK(s.current_addr() == 0x11);
-    reply(s, 0x11, "31.0   ");
-    s.step(500);
-    s.step(650);
+    ack(s, 0x11);
+    s.step(750);
+    s.step(900);
     CHECK(s.state() == WPM_SCAN_DONE);
     CHECK(s.count() == 1);
     CHECK(s.found()[0].addr == 0x11);
@@ -96,12 +99,12 @@ int main() {
     WpmBusScan s;
     s.start(0x28, 0x28, 0);
     s.step(0);
-    reply(s, 0x44, "259e   ");
+    ack(s, 0x44);
     s.step(10);
     CHECK(s.count() == 0);
     CHECK(s.stray_replies() == 1);
-    reply(s, 0x28, "31.0   ");
-    s.step(20);
+    ack(s, 0x28);
+    s.step(300);
     CHECK(s.count() == 1);
     CHECK(s.found()[0].addr == 0x28);
   }
@@ -110,8 +113,62 @@ int main() {
     s.start(0x28, 0x28, 0);
     s.step(0);
     s.step(300);
+    ack(s, 0x28);
     reply(s, 0x28, "31.0   ");
     s.step(310);
+    CHECK(s.count() == 0);
+    CHECK(s.stray_replies() == 2);
+  }
+  {  // ack_only_entry_has_no_version
+    WpmBusScan s;
+    s.start(0x28, 0x28, 0);
+    s.step(0);
+    ack(s, 0x28);
+    s.step(300);
+    CHECK(s.count() == 1);
+    CHECK(!s.found()[0].ver_valid);
+    CHECK(std::memcmp(s.found()[0].ver, "       ", 7) == 0);
+  }
+  {  // ack_then_version_in_window
+    WpmBusScan s;
+    s.start(0x28, 0x28, 0);
+    s.step(0);
+    ack(s, 0x28);
+    s.step(50);  // ACK alone: still waiting
+    CHECK(s.count() == 0);
+    reply(s, 0x28, "31.0   ");
+    s.step(60);
+    CHECK(s.count() == 1);
+    CHECK(s.found()[0].ver_valid);
+    CHECK(std::memcmp(s.found()[0].ver, "31.0   ", 7) == 0);
+    CHECK(s.stray_replies() == 0);
+  }
+  {  // version_then_ack_in_window
+    WpmBusScan s;
+    s.start(0x28, 0x28, 0);
+    s.step(0);
+    reply(s, 0x28, "31.0   ");
+    ack(s, 0x28);
+    s.step(60);
+    CHECK(s.count() == 1);
+    CHECK(s.found()[0].ver_valid);
+    CHECK(std::memcmp(s.found()[0].ver, "31.0   ", 7) == 0);
+  }
+  {  // version_frame_alone_counts_as_answer
+    WpmBusScan s;
+    s.start(0x28, 0x28, 0);
+    s.step(0);
+    reply(s, 0x28, "31.0   ");
+    s.step(5);
+    CHECK(s.count() == 1);
+    CHECK(s.found()[0].ver_valid);
+  }
+  {  // stray_ack_ignored
+    WpmBusScan s;
+    s.start(0x28, 0x28, 0);
+    s.step(0);
+    ack(s, 0x29);
+    s.step(300);
     CHECK(s.count() == 0);
     CHECK(s.stray_replies() == 1);
   }
@@ -126,7 +183,7 @@ int main() {
     CHECK(std::memcmp(s.found()[0].ver, "251e   ", 7) == 0);
     char buf[96];
     size_t n = wpm_scan_entry_json(s.found()[0], buf, sizeof buf);
-    CHECK(std::strcmp(buf, "{\"addr\":\"5c\",\"ver_valid\":false,\"version\":\"251e   \"}") == 0);
+    CHECK(std::strcmp(buf, "{\"addr\":\"5c\",\"ver_valid\":false,\"version\":\"251e   \",\"ver_src\":\"none\"}") == 0);
     CHECK(n == std::strlen(buf));
   }
   {  // send_failure_continues_sweep
@@ -160,13 +217,22 @@ int main() {
     CHECK(s.last_error() == WPM_BUS_ERR_NONE);
   }
   {  // entry_json_exact / escapes
-    WpmScanFound f = {0x28, true, {'3', '1', '.', '0', ' ', ' ', ' '}};
+    WpmScanFound f = {0x28, true, {'3', '1', '.', '0', ' ', ' ', ' '}, WPM_VER_SRC_FRAME};
     char buf[96];
     wpm_scan_entry_json(f, buf, sizeof buf);
-    CHECK(std::strcmp(buf, "{\"addr\":\"28\",\"ver_valid\":true,\"version\":\"31.0   \"}") == 0);
-    WpmScanFound g = {0x0a, true, {'a', '"', 'b', '\\', 'c', 0x01, static_cast<char>(0x80)}};
+    CHECK(std::strcmp(buf, "{\"addr\":\"28\",\"ver_valid\":true,\"version\":\"31.0   \",\"ver_src\":\"frame\"}") == 0);
+    WpmScanFound g = {0x0a, true, {'a', '"', 'b', '\\', 'c', 0x01, static_cast<char>(0x80)}, WPM_VER_SRC_NONE};
     wpm_scan_entry_json(g, buf, sizeof buf);
-    CHECK(std::strcmp(buf, "{\"addr\":\"0a\",\"ver_valid\":true,\"version\":\"a\\\"b\\\\c..\"}") == 0);
+    CHECK(std::strcmp(buf, "{\"addr\":\"0a\",\"ver_valid\":true,\"version\":\"a\\\"b\\\\c..\",\"ver_src\":\"none\"}") == 0);
+  }
+  {  // entry_json_ver_src_values
+    WpmScanFound f = {0x28, true, {'3', '1', '.', '0', ' ', ' ', ' '}, WPM_VER_SRC_CACHE};
+    char buf[96];
+    wpm_scan_entry_json(f, buf, sizeof buf);
+    CHECK(std::strcmp(buf, "{\"addr\":\"28\",\"ver_valid\":true,\"version\":\"31.0   \",\"ver_src\":\"cache\"}") == 0);
+    CHECK(std::strcmp(wpm_scan_ver_src_str(WPM_VER_SRC_NONE), "none") == 0);
+    CHECK(std::strcmp(wpm_scan_ver_src_str(WPM_VER_SRC_FRAME), "frame") == 0);
+    CHECK(std::strcmp(wpm_scan_ver_src_str(9), "none") == 0);
   }
   {  // status_head_exact
     char buf[96];

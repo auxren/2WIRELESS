@@ -10,6 +10,10 @@
 extern bool v2version;
 bool wpm_bus_master_query(uint8_t addr);
 bool wpm_bus_master_polldone();
+uint8_t framRead(int addr);
+
+// Stock display cache written by setDisplayMessage(0, ...) on every 0x13 frame: [addr][7 chars].
+static const int DISPLAY_CACHE_ADDR = 0x02C0FE;
 
 static const uint32_t BUS_QUIET_MS = 50;
 
@@ -26,6 +30,8 @@ void wpm_bus_note_frame() {
 void wpm_bus_on_version_frame(uint8_t addr, const uint8_t ver[7]) {
   scan.on_version_frame(addr, ver, 7);
 }
+
+void wpm_bus_on_query_reply(uint8_t addr) { scan.on_query_reply(addr); }
 
 bool wpm_bus_scan_active() { return scan.state() == WPM_SCAN_SCANNING; }
 
@@ -114,12 +120,25 @@ void wpm_bus_handle_scan_status(WiFiClient& client) {
   char buf[96];
   size_t n = wpm_scan_status_head_json(scan.state(), scan.idx(), scan.count(), buf, sizeof buf);
   String body;
-  body.reserve(n + scan.count() * 60 + 4);
+  body.reserve(n + scan.count() * 80 + 4);
   body += buf;
   for (size_t i = 0; i < scan.count(); i++) {
     if (i) body += ",";
     char e[96];
-    if (wpm_scan_entry_json(scan.found()[i], e, sizeof e)) body += e;
+    WpmScanFound f = scan.found()[i];
+    if (!f.ver_valid) {  // fall back to the version the stock display cache last saw for this module
+      uint8_t c[1 + WPM_SCAN_VER_LEN];
+      bool any = false;
+      for (size_t k = 0; k < sizeof c; k++) c[k] = framRead(DISPLAY_CACHE_ADDR + (int)k);
+      for (size_t k = 1; k < sizeof c; k++)
+        if (c[k]) any = true;
+      if (c[0] == f.addr && any) {
+        for (size_t k = 0; k < WPM_SCAN_VER_LEN; k++) f.ver[k] = (char)c[1 + k];
+        f.ver_valid = true;
+        f.ver_src = WPM_VER_SRC_CACHE;
+      }
+    }
+    if (wpm_scan_entry_json(f, e, sizeof e)) body += e;
   }
   body += "]}";
   wpm_send_json(client, body);
