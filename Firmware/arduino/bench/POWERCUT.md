@@ -165,3 +165,17 @@ blinks 3 s and hands off again).
 ## Step 6 result: production loader round trip (2026-10-22 13:14-13:22)
 
 Production build (untagged, loader 8192 B crc32 FCF09B1B, image 130276 B crc32 27DF365F, ota 113892 B crc32 27D00D24) flashed over USB; `/version` shows no build tag. OTA to variant b: commit 13:17:27, app up at the first poll after rejoin, `last:"ok"`, app_crc32 0A53CC0E, build b. OTA back to the production image: commit 13:20:01, `last:"ok"`, app_crc32 27D00D24, no build tag. Copy time at full speed is about 1 s (445 rows). PASS.
+
+## Re-bench after the row-order fix (loader writes row 0 last; 0db4b6e), 2026-10-22 13:52-14:00
+
+Bench image: tag a on the slow loader built from 0db4b6e (loader 8200 B crc32 CCF6C4CD, image crc32 AAB15993; the app images are unchanged, variants a/b 0A47FCE2 / 0A53CC0E).
+
+| Check | Result |
+|-------|--------|
+| OTA a -> b (commit 13:55:07) | `last:"ok"`, app_crc32 0A53CC0E, build b, app up at the first poll after rejoin. PASS |
+| USB brick drill (brick2.ino.bin, app row 0 zeroed, flashed 13:56:54) | "Arduino MKR1000" 0x2341:0x004E resident from 13:56:59 and stayed; recovery upload found the bootloader port, verify OK, app up on build a. PASS |
+| Early mid-copy cuts (~5 s and ~10 s into the copy) | see the rows below (owner) |
+| Early cut 1: owner cut ~3 s after reading "accepted" (commit reply 14:13:41), i.e. ~5 s into the copy | LED solid ~20 s after power-on (full re-copy), then off; `last:"ok"`, app_crc32 0A47FCE2, build a, reset_cause SYST. PASS |
+| Early cut 2: owner cut ~8 s after reading "accepted" (commit reply 14:17:07), i.e. ~10 s into the copy | LED solid ~20 s after power-on (full re-copy), then off; `last:"ok"`, app_crc32 0A53CC0E, build b, reset_cause SYST. PASS |
+
+Mid-copy coverage after the fix: cuts at ~5 s and ~10 s (this section) plus the earlier ~18 s and ~24 s cuts all re-copied from row 0 on the next boot; the ~26 s and ~28 s cuts found the record already committed.
