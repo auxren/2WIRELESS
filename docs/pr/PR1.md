@@ -34,7 +34,7 @@ Starts a scan. Success: `{"ok":true}`.
   ends `done` at once with no entries.
 - `window`: optional decimal milliseconds, the per-address listen window. Default 300; clamped to
   `100..2000`. Empty, longer than 6 characters or non-digit gives `args`.
-- `unsupported`: the bus is in V2 framing (`v2/` request prefix); V2 scans are not implemented.
+- `unsupported`: the V2 pin (`V2VERSION_PIN`, D2) is set, i.e. the bus is V2; V2 scans are not implemented. A `v2/` request prefix does not change this.
 - `busy`: a scan is already running.
 - `busy` and `args` also set `last_error` (1 and 2).
 
@@ -46,7 +46,7 @@ Sent chunked (as `/getpresets` is). Shape:
 
 - `idx`: number of addresses completed (queried and past their gap) in this scan; `count`: number of entries in `found`
   (`found` is in address order, at most 112).
-- `addr`: two upper-case hex digits. `version`: exactly 7 characters; backslash and quote are escaped, bytes
+- `addr`: two lower-case hex digits. `version`: exactly 7 characters; backslash and quote are escaped, bytes
   below 0x20 or 0x7F and above become `.`.
 
 `ver_valid` / `ver_src`:
@@ -67,7 +67,8 @@ Sent chunked (as `/getpresets` is). Shape:
 
 - `wpm_present`: always true (the WPM is the card).
 - `bus_quiet`: true when no slave frame of more than 4 bytes arrived in the last 50 ms (or none ever).
-- `dialect`: 0 until a frame has been seen since boot, then 1 (v1, long framing) or 2 (V2).
+- `dialect`: 0 until a slave frame has been seen since boot, then 2 if the V2 pin is set, else 1 (v1, long framing). It reads the pin, not the framing last seen, and a `v2/` prefix does not change it.
+- `bus_quiet`: true when no slave frame and no module read (`requestEvent`) has been seen for 50 ms.
 - `last_error`: 0 none, 1 busy, 2 bad args, 4 send timeout. It persists until the next accepted
   `/bus/scan` clears it, so it can show an earlier refusal.
 
@@ -77,6 +78,11 @@ Sends the POLL_DONE frame on the bus. Success `{"ok":true}` after the frame went
 `{"ok":false,"error":"send_timeout"}` (and `last_error` 4) if the master send fails; `busy` during a scan.
 
 ### Mutual exclusion
+
+Read guard: `/bus/scan` and `/bus/polldone` also answer `busy` (and set `last_error` 1) within 1 s of the last module read
+from the WPM (after `/setpresets` or a card read), and a running sweep holds its next QUERY (and its window clock) until
+reads have been idle for 50 ms. Known limitation: a module read that starts while a QUERY is being sent can still be
+NAKed (the slave is offline for about 1 ms per address); this was not benched.
 
 While a scan is running, `/bus/scan`, `/ota/commit`, `/getpresets?addr=...`, `/setpresets?addr=...` and
 `/bus/polldone` answer `{"ok":false,"error":"busy"}`. Stock clients never see this state, because only the

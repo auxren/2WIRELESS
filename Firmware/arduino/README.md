@@ -130,12 +130,13 @@ Capability `bus`. All replies are HTTP 200 JSON; refusals are `{"ok":false,"erro
 
 - `GET /bus/scan?first=HH&last=HH&window=MS` -> `{"ok":true}`. One QUERY (0x1A) per address (default
   `08..77`, two hex digits each, either case), a listen window per address (default 300 ms, clamped to
-  100..2000, decimal) and a 150 ms gap; run from `loop()`. A bad argument gives `args`, a V2 bus gives
-  `unsupported`, a scan already running gives `busy`.
+  100..2000, decimal) and a 150 ms gap; run from `loop()`. A bad argument gives `args`, a V2 bus (V2 pin set; a `v2/` prefix does not count) gives
+  `unsupported`, a scan already running, or a module read within the last 1 s, gives `busy`.
 - `GET /bus/scan/status` (chunked) -> `{"state":"idle|scanning|done","idx":N,"count":N,"found":[{"addr":"28","ver_valid":false,"version":"       ","ver_src":"none"}]}`.
   `idx` is the number of addresses completed, `count` the number found.
 - `GET /bus/status` -> `{"wpm_present":true,"bus_quiet":true,"dialect":0,"last_error":0}`. `dialect` is 0
-  (no frame seen), 1 (v1) or 2 (V2); `last_error` is 0 none, 1 busy, 2 args, 4 send timeout, and persists
+  (no slave frame seen since boot), then 2 if the V2 pin is set, else 1; `bus_quiet` needs 50 ms without a slave frame
+  or module read; `last_error` is 0 none, 1 busy, 2 args, 4 send timeout, and persists
   until the next accepted scan.
 - `GET /bus/polldone` -> sends POLL_DONE; `{"ok":true}`, or `send_timeout` if the send fails.
 
@@ -145,7 +146,9 @@ from the stock display cache at FRAM 0x02C0FE when it names that address ("cache
 otherwise `ver_valid:false`, `version` is seven spaces and `ver_src` is "none".
 
 Busy rule: during a scan, `/bus/scan`, `/ota/commit`, `/getpresets?addr=`, `/setpresets?addr=` and
-`/bus/polldone` answer `busy`; other routes keep working. Stock clients cannot start a scan.
+`/bus/polldone` answer `busy`; other routes keep working. Stock clients cannot start a scan. `/bus/scan` and
+`/bus/polldone` also answer `busy` within 1 s of a module read, and a sweep waits for 50 ms of read idle before each
+QUERY.
 
 A full sweep takes about 52 s (about 450 ms per address at the default window).
 
