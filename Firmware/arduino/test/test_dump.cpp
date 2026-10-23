@@ -254,6 +254,56 @@ int main() {
     CHECK(std::strcmp(buf, want) == 0);
     CHECK(wpm_dump_status_json(j, 1234, buf, 20) == 0);
   }
+  {  // elapsed_frozen_after_done_and_abort
+    WpmDumpJob j;
+    running(j, 0, 5000, 1000, 0);
+    j.on_data(0, 10);
+    j.step(100);
+    CHECK(j.elapsed_ms(500) == 500);
+    j.step(1100);  // silence -> done at 1100
+    CHECK(j.state() == WPM_DUMP_DONE);
+    CHECK(j.elapsed_ms(9999) == 1100);
+    j.abort(5000);  // not running: end time unchanged
+    CHECK(j.elapsed_ms(9999) == 1100);
+    WpmDumpJob k;
+    running(k, 0, 5000, 1000, 0);
+    k.abort(700);
+    CHECK(k.state() == WPM_DUMP_IDLE);
+    CHECK(k.elapsed_ms(5000) == 700);
+  }
+  {  // send_failed_noop_outside_sending_waiting
+    WpmDumpJob j;
+    j.send_failed(1);  // idle
+    CHECK(j.state() == WPM_DUMP_IDLE);
+    CHECK(j.error() == WPM_BUS_ERR_NONE);
+    running(j, 0, 5000, 1000, 0);
+    j.on_data(0, 10);
+    j.step(10);
+    CHECK(j.state() == WPM_DUMP_TRANSFERRING);
+    j.send_failed(20);
+    CHECK(j.state() == WPM_DUMP_TRANSFERRING);
+    CHECK(j.error() == WPM_BUS_ERR_NONE);
+    j.on_complete_frame(0x28);
+    j.step(30);
+    CHECK(j.state() == WPM_DUMP_DONE);
+    j.send_failed(40);
+    CHECK(j.state() == WPM_DUMP_DONE);
+    CHECK(j.error() == WPM_BUS_ERR_NONE);
+  }
+  {  // start_refusal_keeps_counters
+    WpmDumpJob j;
+    running(j, 0, 5000, 1000, 0);
+    j.on_data(0x100, 66);
+    j.on_dropped(3);
+    j.step(10);
+    CHECK(j.start(0x28, 0, 5000, 1000, 11) == WPM_BUS_ERR_BUSY);  // busy
+    CHECK(j.received() == 66 && j.extent() == 0x142 && j.lines() == 1 && j.dropped() == 3);
+    j.abort(20);
+    CHECK(j.start(0x07, 0, 5000, 1000, 21) == WPM_BUS_ERR_ARGS);  // args
+    CHECK(j.state() == WPM_DUMP_IDLE);
+    CHECK(j.received() == 66 && j.extent() == 0x142 && j.lines() == 1 && j.dropped() == 3);
+    CHECK(j.elapsed_ms(99) == 20);
+  }
   {  // state strings
     CHECK(std::strcmp(wpm_dump_state_str(WPM_DUMP_IDLE), "idle") == 0);
     CHECK(std::strcmp(wpm_dump_state_str(WPM_DUMP_SENDING), "sending") == 0);
