@@ -1,7 +1,7 @@
 # WPM firmware (Arduino MKR1000)
 
 Firmware for the Buchla 200e Wi-Fi preset manager (WPM): an Arduino MKR1000 (SAMD21) with a 256 KB SPI
-FRAM. This tree builds the app from source, serves `/version`, and can update itself over Wi-Fi (OTA).
+FRAM. This tree builds the app from source, serves `/version`, can update itself over Wi-Fi (OTA), and scans the 200e bus for modules (1.20).
 
 Flash layout (flash addresses):
 
@@ -63,7 +63,7 @@ Needs `arduino-cli` and `python3`. `build.sh` installs the pinned core `arduino:
 
 ## OTA
 
-Stock v1.18 units need one USB upload (of the full 1.19 `.ino.bin`) to get OTA. After that, updates go
+Stock v1.18 units need one USB upload (of a full 1.19 or 1.20 `.ino.bin`) to get OTA. After that, updates go
 over Wi-Fi.
 
 How it works: the image is `build/2Wireless/2Wireless.ota.bin`. Stage it in FRAM with the existing
@@ -101,7 +101,7 @@ Route contract (all replies HTTP 200 with a JSON body):
 - `/ota/commit?len=N&crc32=HEX` checks in order job running (`"error":"busy"`), `len` (0, odd, or
   greater than 0x2BD18 gives `"error":"len"`), image head (word 0 in 0x20000000..0x20008000, word 1
   odd and inside 0x6000..0x40000, marker at 0x1C with base 0x6000 and length == `len` gives `"error":"image"`), CRC over FRAM (`"error":"crc"`). `busy` is
-  never returned by this firmware today (`wpm_ota_busy()` is hard-coded false; no bus jobs exist yet).
+  returned while a bus scan runs (1.20: `wpm_ota_busy()` is `wpm_bus_scan_active()`; in 1.19 it was never returned).
   On success it writes the record, replies `{"ok":true,"pending":{"len":N,"crc32":"HEX"}}`,
   then calls `NVIC_SystemReset()` after the reply is flushed.
 - `/ota/status` replies `{"loader":"fram-loader-1","pending":false,"last":"ok"|"crc_mismatch"|"image"|"none","app_crc32":"HEX"}`.
@@ -121,21 +121,56 @@ listening socket on station re-association while WiFi101 still reports it listen
 `begin()` in `setup()` left port 80 refused (found on the bench, 2026-10-22). The capture counter is
 reset before each `sendBackupPresets`.
 
+## Bus scan and status (1.20)
+
+Release files in `2Wireless/bin/`: `2Wireless-1.19.ino.bin` / `.ota.bin` (PR 0, OTA) and
+`2Wireless-1.20.ino.bin` (134548 B, crc32 3CFA9168) / `2Wireless-1.20.ota.bin` (118164 B, crc32
+6BE0802E), all with sha256 in `bin/SHA256SUMS`. An OTA from 1.19 uses `/ota/commit?len=118164&crc32=6BE0802E`.
+Capability `bus`. All replies are HTTP 200 JSON; refusals are `{"ok":false,"error":"busy|args|unsupported|send_timeout"}`.
+
+- `GET /bus/scan?first=HH&last=HH&window=MS` -> `{"ok":true}`. One QUERY (0x1A) per address (default
+  `08..77`, two hex digits each, either case), a listen window per address (default 300 ms, clamped to
+  100..2000, decimal) and a 150 ms gap; run from `loop()`. A bad argument gives `args`, a V2 bus gives
+  `unsupported`, a scan already running gives `busy`.
+- `GET /bus/scan/status` (chunked) -> `{"state":"idle|scanning|done","idx":N,"count":N,"found":[{"addr":"28","ver_valid":false,"version":"       ","ver_src":"none"}]}`.
+  `idx` is the number of addresses completed, `count` the number found.
+- `GET /bus/status` -> `{"wpm_present":true,"bus_quiet":true,"dialect":0,"last_error":0}`. `dialect` is 0
+  (no frame seen), 1 (v1) or 2 (V2); `last_error` is 0 none, 1 busy, 2 args, 4 send timeout, and persists
+  until the next accepted scan.
+- `GET /bus/polldone` -> sends POLL_DONE; `{"ok":true}`, or `send_timeout` if the send fails.
+
+Version rule: a module answers QUERY with the 5-byte identity ACK `04 22 <addr> 1C FF`, which only says it
+is present. A version comes from a 0x13 frame seen from that address in the window (`ver_src` "frame") or
+from the stock display cache at FRAM 0x02C0FE when it names that address ("cache", may be stale);
+otherwise `ver_valid:false`, `version` is seven spaces and `ver_src` is "none".
+
+Busy rule: during a scan, `/bus/scan`, `/ota/commit`, `/getpresets?addr=`, `/setpresets?addr=` and
+`/bus/polldone` answer `busy`; other routes keep working. Stock clients cannot start a scan.
+
+A full sweep takes about 52 s (about 450 ms per address at the default window).
+
+Bench: with the Mac joined to the WPM AP,
+
+    python3 bench/bus_scan.py [--first HH --last HH --window MS] [--base URL] [--iface en1] [--status-only]
+
+starts a scan, polls the status every 2 s and prints one line per module and the elapsed time. Results are in
+`bench/RESULTS.md` ("PR 1"), the PR text in `../../docs/pr/PR1.md`.
+
 ## /version
 
 `GET /version` returns (one line; shape from `wpm_version_format`):
 
-    {"version":"1.19","board":"mkr1000","loader":"fram-loader-1","capabilities":["version","ota"],
+    {"version":"1.20","board":"mkr1000","loader":"fram-loader-1","capabilities":["version","ota","bus"],
      "getpresets_wait":false,"usbMode":1,"pollOnStart":0,"reset_cause":"POR","uptime_s":123,"rssi":-45,
      "tcp_sockets_free":null,"app_crc32":"HEX"}
 
 | Field | Meaning |
 | --- | --- |
-| `version` | `FW_VERSION`, now "1.19". Every PR bumps it; clients key on `capabilities`, not the number |
+| `version` | `FW_VERSION`, now "1.20". Every PR bumps it; clients key on `capabilities`, not the number |
 | `build` | present only in builds made with `build.sh --tag`; placed right after `version` |
 | `board` | always "mkr1000" |
 | `loader` | "fram-loader-1" when a plausible loader is at flash 0x2000; key omitted otherwise (dev builds) |
-| `capabilities` | currently `["version","ota"]`; later PRs append |
+| `capabilities` | currently `["version","ota","bus"]`; later PRs append |
 | `getpresets_wait` | false |
 | `usbMode` | the stored USB mode (1 = Device, 0 = Host) |
 | `pollOnStart` | the stored "poll modules on startup" setting (0/1) |
@@ -154,7 +189,7 @@ Nothing existing changes (design spec section 3):
 
 - Every existing route keeps its URL, parameter order, reply shape and default behaviour. New parameters
   are optional and trailing. The stock pages (PresetManager, GetPresets, SetPresets, WriteFirmware, Setup,
-  home page) keep working; the Setup page shows "Firmware v1.19".
+  home page) keep working; the Setup page shows "Firmware v1.20" (1.19 is the PR 0 / OTA release).
 - The FRAM layout (`Firmware/fram_map.txt`) is untouched. New state lives only in the reserved range
   0x02BE4D-0x02BE7F and is zero on stock units.
 - USB identity (0x1209:0xFBA0 "Studio H Software USB Midi"), AP name BUCHLA200E and the I2C bus
@@ -163,9 +198,9 @@ Nothing existing changes (design spec section 3):
 - Boot timing unchanged and "the loader adds well under 1 ms when no OTA is pending" are design targets
   from the spec, not measurements. The bench measured the OTA timings (push ~47 s, verify ~20 s, copy ~1 s
 at full speed), see Bench results.
-- New behaviour arrives only through new routes (`/version`, `/ota/*`). Refusals on new routes are
+- New behaviour arrives only through new routes (`/version`, `/ota/*`, `/bus/*`). Refusals on new routes are
   HTTP 200 with `{"ok":false,"error":"<code>"}`.
-- `FW_VERSION` is "1.19".
+- `FW_VERSION` is "1.20" (1.19 with OTA, 1.20 with bus scan).
 
 ## Bench results
 
@@ -216,7 +251,7 @@ round trip). In order:
   113,892 B) was flashed over USB, updated OTA to variant b and back to the production image; both
   commits ended `last` "ok" with the expected `app_crc32`, and the production copy took about 1 s.
 
-Not covered by the bench: `busy` is never returned (no background job exists yet); a stock unit's
+Not covered by the bench: OTA `busy` was exercised only in the 1.20 scan bench (RESULTS.md, "PR 1"); a stock unit's
 `/version` answer (the HTML home page) and the `v2/` prefix behaviour remain spec statements.
 
 ### Rerunning the bench

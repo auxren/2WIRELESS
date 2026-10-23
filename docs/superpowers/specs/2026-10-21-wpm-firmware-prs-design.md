@@ -111,6 +111,7 @@ Firmware (v1.18 source):
 - Master-side helpers exist for everything PR 1–4 need: `switchToMaster/Slave`, `masterBeginTransmission`,
   `sendQuery(addr)` (0x1A), `sendBackupPresets`, `sendRestorePresets`, `sendPollingComplete`,
   `sendRemoteEnable/Disable`; `i2c_guard` blocks the slave ISR while mastering.
+- A module answers QUERY (0x1A) with the 5-byte identity ACK `04 22 <addr> 1C FF`; 0x13 version frames follow only a front-panel hold (bench 2026-10-22).
 - Flash budget: app 108,612 bytes of 248 KB. FRAM scratch `0x000000–0x02BD18` (179,481 bytes) holds a
   staged card image or an OTA image; both fit (largest card image 151,984 bytes; app ≤ ~120 KB).
 
@@ -226,16 +227,23 @@ Each PR is a branch off `master`, independently mergeable, with its own README s
   `/ota/status` → `{"loader":"fram-loader-1","pending":false,"last":"ok"|"crc_mismatch"|"image"|"none",
   "app_crc32":"HEX"}` (`last` persists until the next commit or abort). `/ota/abort` → `{"ok":true}`.
 
-### PR 1 — bus scan and status (SCAN, BUS_STATUS, POLL_DONE)
+### PR 1 — bus scan and status (SCAN, BUS_STATUS, POLL_DONE) — keys frozen as built (1.20)
 
-- `/bus/scan?first=08&last=77` → `{"ok":true}` or `"busy"`; sweep in `loop()`, one QUERY 0x1A per
-  address, 300 ms reply window, 150 ms gap; found list with the module's 0x13 version frame if seen.
-  `/bus/scan/status` → `{"state":"idle|scanning|done","idx":N,"count":N,"found":[{"addr":"28",
-  "ver_valid":true,"version":"31.0   "}]}`.
-- `/bus/status` → `{"wpm_present":true,"bus_quiet":b,"dialect":0|1|2,"last_error":0..5}`
-  (`wpm_present` is always true: the WPM is the card).
-- `/bus/poll_done` → sends `04 00 22 14 FF` (or `0x14` in v2 framing) when the bus is quiet; reply
-  after it went out, `"error":"send_timeout"` after 2 s, `"busy"` during a job.
+- `/bus/scan?first=08&last=77&window=300` → `{"ok":true}`; refusals `{"ok":false,"error":"busy|args|unsupported"}`
+  (`args`: `first`/`last` not two hex digits in 08..77, or `window` not decimal; `unsupported`: V2 bus). Sweep in
+  `loop()`, one QUERY 0x1A per address, listen window `window` ms (default 300, clamped 100..2000), 150 ms gap.
+  `first > last` → `done`, no entries.
+- `/bus/scan/status` (chunked) → `{"state":"idle|scanning|done","idx":N,"count":N,"found":[{"addr":"28",
+  "ver_valid":false,"version":"       ","ver_src":"none"}]}`; `idx` = addresses completed, `count` = entries found.
+  A module answers QUERY with the identity ACK (§4) and is listed; `ver_valid` is true only with a 0x13 frame
+  from it in the window (`ver_src` "frame") or when the display cache at 0x02C0FE names it ("cache", may be stale);
+  else seven spaces and "none".
+- `/bus/status` → `{"wpm_present":true,"bus_quiet":b,"dialect":0|1|2,"last_error":0|1|2|4}`
+  (`wpm_present` is always true: the WPM is the card; `last_error` persists until the next accepted scan).
+- `/bus/polldone` → sends `04 00 22 14 FF` (or `0x14` in v2 framing); `{"ok":true}` after it went out,
+  `"error":"send_timeout"` if the send fails, `"busy"` during a scan.
+- Busy rules: while a scan runs `/bus/scan`, `/ota/commit`, `/getpresets?addr=`, `/setpresets?addr=` and
+  `/bus/polldone` answer `busy`. Capability `bus`; `version` 1.20.
 
 ### PR 2 — byte-counting capture (GET_DUMP)
 
