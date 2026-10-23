@@ -166,7 +166,7 @@ volatile int write_counter=0; //USed to auto increment write addresses during I2
 volatile int fram_address=0; //This is global only because it must span OnRequest calls during I2C READ from master. 
 volatile bool startup = true; //Used to free 206e when starting up.
 volatile bool write_i2c_to_fram = false; //Cache incoming i2c to FRAM.
-unsigned long readTime = 0; //used to detect idle to free up 206e at start.
+volatile unsigned long readTime = 0; //used to detect idle to free up 206e at start; written in requestEvent, read by wpm_bus.cpp.
 volatile bool i2c_guard = false; //attempt to prevent switch to master while receiving
 
 bool isUsbDevice = true; //Select between USB Device and USB Host

@@ -7,7 +7,7 @@
 bool wpm_bus_master_query(uint8_t addr);
 bool wpm_bus_master_polldone();
 bool wpm_v2_pin();  // digitalRead(V2VERSION_PIN); unlike v2version, not flipped by a /v2/ prefix
-extern unsigned long readTime;  // millis() of the last module read (requestEvent)
+extern volatile unsigned long readTime;  // millis() of the last module read (written in requestEvent)
 uint8_t framRead(int addr);
 
 // Stock display cache written by setDisplayMessage(0, ...) on every 0x13 frame: [addr][7 chars].
@@ -41,7 +41,8 @@ bool wpm_bus_scan_active() { return scan.state() == WPM_SCAN_SCANNING; }
 
 void wpm_bus_loop() {
   // Modules read presets from the WPM with interrupts off and no timeouts: never start a send
-  // (or let the reply window clock run) while reads are recent. Note: masterBeginTransmission's
+  // while reads are recent (step() is skipped, which defers the SEND phase; the reply window and
+  // the gap are wall-clock and keep running). Note: masterBeginTransmission's
   // busy-wait reads I2CM STATUS while the SERCOM is still in slave mode (stock behaviour), and a
   // sweep runs it once per address; PR 2/4 will master more.
   if (readRecent(READ_IDLE_MS)) return;

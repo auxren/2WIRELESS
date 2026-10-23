@@ -12,12 +12,12 @@ PR 1's own changes.
 - The scan logic is a pure C++ state machine, `libraries/WpmCommon/src/wpm_bus_scan.{h,cpp}`, with desktop
   tests (`make -C Firmware/arduino/test`); the routes and the bus hooks are in
   `2Wireless/src/wpm_bus.{h,cpp}`, wired into `2Wireless.ino` and the I2C receive path.
-- Release files: `Firmware/arduino/2Wireless/bin/2Wireless-1.20.ino.bin` (full image, 134548 B, crc32
-  3CFA9168, sha256 `87e81a361037a977dc6fad32f87002fc56af8f1131f52e58b686c4a2a4d195b1`) and
-  `2Wireless-1.20.ota.bin` (app only, 118164 B, crc32 6BE0802E, sha256
-  `69335cb2dfd3b199aeaaf887b109176cee49850d2153ad61526c25ef5a4a8902`), both listed in `bin/SHA256SUMS`
+- Release files: `Firmware/arduino/2Wireless/bin/2Wireless-1.20.ino.bin` (full image, 134532 B, crc32
+  52BA34BE, sha256 `b3c277d8b2a515722572306c4093e3a42a8a0d907f071ff0fec2b46bdf124635`) and
+  `2Wireless-1.20.ota.bin` (app only, 118148 B, crc32 5CD2BF86, sha256
+  `be7191ede48dff6d819c78caea4477b36ab4a6537f5d715b21cdef1f26564bbb`), both listed in `bin/SHA256SUMS`
   next to the 1.19 pair. A unit already on 1.19 updates over Wi-Fi with
-  `/ota/commit?len=118164&crc32=6BE0802E` after staging the `.ota.bin`; a stock v1.18 unit needs one USB
+  `/ota/commit?len=118148&crc32=5CD2BF86` after staging the `.ota.bin`; a stock v1.18 unit needs one USB
   upload of a full image first (see PR 0).
 
 ## Routes
@@ -80,9 +80,11 @@ Sends the POLL_DONE frame on the bus. Success `{"ok":true}` after the frame went
 ### Mutual exclusion
 
 Read guard: `/bus/scan` and `/bus/polldone` also answer `busy` (and set `last_error` 1) within 1 s of the last module read
-from the WPM (after `/setpresets` or a card read), and a running sweep holds its next QUERY (and its window clock) until
-reads have been idle for 50 ms. Known limitation: a module read that starts while a QUERY is being sent can still be
-NAKed (the slave is offline for about 1 ms per address); this was not benched.
+from the WPM (after `/setpresets` or a card read), and a running sweep defers its next QUERY until reads have been idle
+for 50 ms (the reply window and the gap are wall-clock and keep running, so a sweep stretches only by the idle wait).
+Benched: `/setpresets?addr=28` followed at once by `/bus/scan` gave `busy` with `bus_quiet:false`; the same scan 3 s
+later found the module, and a recapture afterwards equalled the stock reference. Known limitation: a module read that
+starts during the ~1 ms the slave is offline while a QUERY goes out can still be NAKed; that race was not benched.
 
 While a scan is running, `/bus/scan`, `/ota/commit`, `/getpresets?addr=...`, `/setpresets?addr=...` and
 `/bus/polldone` answer `{"ok":false,"error":"busy"}`. Stock clients never see this state, because only the
@@ -160,7 +162,7 @@ Other routes, with the Mac joined to the WPM AP:
     bench/wpm.sh get bus/polldone
 
 OTA from 1.19: stage with `python3 bench/ota_push.py 2Wireless/bin/2Wireless-1.20.ota.bin`, then
-`bench/wpm.sh get 'ota/commit?len=118164&crc32=6BE0802E'` and `bash bench/wifi_rejoin.sh`.
+`bench/wpm.sh get 'ota/commit?len=118148&crc32=5CD2BF86'` and `bash bench/wifi_rejoin.sh`.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 

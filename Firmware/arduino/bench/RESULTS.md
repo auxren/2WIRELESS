@@ -136,3 +136,9 @@ Builds: fcc0e73 (first 1.20), efd9117 (QUERY reply = 0x1C ACK), 04a0d61 (final: 
 | Stock routes | `/ssid`, `/currentpreset`, `/setup` "Firmware v1.20", `/getpresets?addr=76` empty. PASS |
 
 Not tested: a scan on a V2 bus (`unsupported`; no V2 unit); a `send_timeout` (needs a bus fault); more than ~26 found entries (the chunked writer is verified only with 8 entries and by reading the stock pattern it mirrors).
+
+### Fix round 3 (304afbd): the read guard, 2026-10-22
+
+Build 304afbd/34e3bdc (image 134532 B crc32 52BA34BE, ota 118148 B crc32 5CD2BF86) flashed. With the 259e flat bank written to FRAM (restore_259e.py --no-restore, read-back True): `/setpresets?addr=28` then an immediate `/bus/scan?first=28&last=28` -> `{"ok":false,"error":"busy"}`, `/bus/status` `bus_quiet:false`, `last_error:1`; the same scan 3 s later -> ok, status done with 0x28 found; a `/getpresets?addr=28` recapture afterwards is identical to cap1 (1069 bytes). PASS. Regression on the same build: see the rows below.
+
+| Regression on 304afbd | full sweep 08..77: 50.8 s, the same 8 modules; `/bus/polldone` ok afterwards. PASS |

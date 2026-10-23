@@ -286,7 +286,7 @@ BUS_STATUS_R, STATUS_R, NAK codes) and `~/Documents/GitHub/Buchla_FW/docs/superp
 | `age_s` | seconds since the module's first read since boot; `null` = no read yet |
 | `ver_addr`, `ver_valid`, `version` | module address and 7 ASCII bytes of the last 0x13 frame; valid only if one was seen |
 | `ver_gen` | count of 0x13 frames seen since boot (identical re-announcements included) |
-| `dialect` | framing last seen: 0 none, 1 long/PRIMO (v1), 2 short/V2 |
+| `dialect` | Xenomorphicle: framing last seen. WPM (PR 1): 0 before any bus frame, then 2 if the V2 hardware pin is set, else 1 (the WPM cannot classify frames; the pin is what selects its own framing). `bus_quiet` also requires 50 ms without a module read, and `/bus/scan`/`/bus/polldone` refuse (`busy`) within 1 s of one |
 | `bus_quiet` | the bus has been idle long enough to master a frame (`checkBus` condition) |
 | `last_error` | 0 none, 1 busy, 2 bad args, 3 no free card, 4 send timeout, 5 no response |
 | `getpresets_wait` | true only if `/getpresets` accepts a trailing `wait` parameter (it does not in this track; PR 2's `/dump` replaces the idea; kept so the app's earlier probe stays valid) |

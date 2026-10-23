@@ -124,8 +124,8 @@ reset before each `sendBackupPresets`.
 ## Bus scan and status (1.20)
 
 Release files in `2Wireless/bin/`: `2Wireless-1.19.ino.bin` / `.ota.bin` (PR 0, OTA) and
-`2Wireless-1.20.ino.bin` (134548 B, crc32 3CFA9168) / `2Wireless-1.20.ota.bin` (118164 B, crc32
-6BE0802E), all with sha256 in `bin/SHA256SUMS`. An OTA from 1.19 uses `/ota/commit?len=118164&crc32=6BE0802E`.
+`2Wireless-1.20.ino.bin` (134532 B, crc32 52BA34BE) / `2Wireless-1.20.ota.bin` (118148 B, crc32
+5CD2BF86), all with sha256 in `bin/SHA256SUMS`. An OTA from 1.19 uses `/ota/commit?len=118148&crc32=5CD2BF86`.
 Capability `bus`. All replies are HTTP 200 JSON; refusals are `{"ok":false,"error":"busy|args|unsupported|send_timeout"}`.
 
 - `GET /bus/scan?first=HH&last=HH&window=MS` -> `{"ok":true}`. One QUERY (0x1A) per address (default
@@ -148,7 +148,8 @@ otherwise `ver_valid:false`, `version` is seven spaces and `ver_src` is "none".
 Busy rule: during a scan, `/bus/scan`, `/ota/commit`, `/getpresets?addr=`, `/setpresets?addr=` and
 `/bus/polldone` answer `busy`; other routes keep working. Stock clients cannot start a scan. `/bus/scan` and
 `/bus/polldone` also answer `busy` within 1 s of a module read, and a sweep waits for 50 ms of read idle before each
-QUERY.
+QUERY (the reply window and the gap keep running on the wall clock). Known limitation: a module read that starts
+during the ~1 ms the slave is offline while a QUERY goes out can still be NAKed; that race was not benched.
 
 A full sweep takes about 52 s (about 450 ms per address at the default window).
 
