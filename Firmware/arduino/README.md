@@ -1,7 +1,7 @@
 # WPM firmware (Arduino MKR1000)
 
 Firmware for the Buchla 200e Wi-Fi preset manager (WPM): an Arduino MKR1000 (SAMD21) with a 256 KB SPI
-FRAM. This tree builds the app from source, serves `/version`, can update itself over Wi-Fi (OTA), and scans the 200e bus for modules (1.20).
+FRAM. This tree builds the app from source, serves `/version`, can update itself over Wi-Fi (OTA), and scans the 200e bus for modules (1.20), and captures a module's presets with byte counting (1.21).
 
 Flash layout (flash addresses):
 
@@ -63,7 +63,7 @@ Needs `arduino-cli` and `python3`. `build.sh` installs the pinned core `arduino:
 
 ## OTA
 
-Stock v1.18 units need one USB upload (of a full 1.19 or 1.20 `.ino.bin`) to get OTA. After that, updates go
+Stock v1.18 units need one USB upload (of a full 1.19, 1.20 or 1.21 `.ino.bin`) to get OTA. After that, updates go
 over Wi-Fi.
 
 How it works: the image is `build/2Wireless/2Wireless.ota.bin`. Stage it in FRAM with the existing
@@ -159,6 +159,46 @@ Bench: with the Mac joined to the WPM AP,
 
 starts a scan, polls the status every 2 s and prints one line per module and the elapsed time. Results are in
 `bench/RESULTS.md` ("PR 1"), the PR text in `../../docs/pr/PR1.md`.
+
+## Byte-counting capture (1.21)
+
+Release files in `2Wireless/bin/`: `2Wireless-1.21.ino.bin` (138052 B, crc32 5E7136DA, sha256
+`5b5956858f32d2b8011e16f253c8479d582624c4416db0f6bca59983a1696e73`) / `2Wireless-1.21.ota.bin` (121668 B,
+crc32 57B917BF, sha256 `ff00531369455cc6b747d5654e50a91069e41280f9aeb06ab61242f3d9355f7d`), listed in
+`bin/SHA256SUMS` next to the 1.19 and 1.20 pairs. An OTA from 1.20 uses `/ota/commit?len=121668&crc32=57B917BF`.
+Capability `dump`. All replies are HTTP 200 JSON; refusals are `{"ok":false,"error":"busy|args"}`.
+
+- `GET /dump?addr=HH[&len=N][&first_wait_ms=M][&silence_ms=S]` -> `{"ok":true}`. Masters a BACKUP to the module
+  and counts the `[offset_hi][offset_lo][data...]` lines it writes to the card (I2C 0x50), applying each at its
+  offset in the FRAM scratch area (flat bank from FRAM 0, byte-identical to a Xenomorpher GET_DUMP). `addr` is two
+  hex digits in `08..77`; `len` is the expected byte count (default 0 = silence mode, at most 0x2BD18);
+  `first_wait_ms` defaults to 5000 (clamped 200..60000), `silence_ms` to 1000 (clamped 200..20000).
+- `GET /dump/status` -> `{"state":"idle|sending|waiting|transferring|done|failed","addr":"28","expected":990,"received":990,"extent":990,"lines":37,"dropped":0,"complete_frame":false,"early_done":0,"error":0,"elapsed_ms":147,"addr_log":"50 50 50"}`.
+  `extent != received` means holes. `error`: 4 BACKUP not sent, 5 no first byte. `addr_log` is diagnostic.
+- `GET /dump/abort` -> `{"ok":true}`, state `idle`.
+
+End: a completion frame after data, `received >= len`, or silence gives `done`; no first byte within
+`first_wait_ms` gives `failed` 5; a master send refused or failed gives `failed` 4. A completion frame before any
+data is counted in `early_done` and does not end the job. Data is accepted only from address 0x50 and the
+completion only from general call; other general-call frames (MIDI clock, 0x13 display) still reach the stock decoder.
+
+Module gates: The firmware never arms remote control or sends POLL_DONE on its own; the client decides. The 272e writes the card only after a bus POLL_DONE since its power-up (`/bus/polldone`, harmless to repeat). The 251e's BACKUP handler is gated on its remote-enable flag (bus 0x16, the stock `/remoteenable` route, also sent by stock poll-on-start); without it the module answers with an immediate completion frame and no data (`early_done:1`, `received:0`). 0x16 is a general-call frame that arms remote control on every module on the bus, including ones the owner switched off at the panel, so a client should send it only when the owner wants that.
+
+Busy rule: during a dump, `/bus/scan`, `/bus/polldone`, `/getpresets?addr=`, `/setpresets?addr=`, `/ota/commit`,
+another `/dump`, `/remoteenable`, `/remotedisable`, `/savepreset`, `/recallpreset`, `/sendmidibytes` and the seven
+direct MIDI routes answer `busy`; every stock master send is refused inside `masterBeginTransmission` while a bus
+job runs, and USB-MIDI and poll-on-start sends are dropped. `/readmemory` and `/writememory` stay available, but
+the client must wait for state `done` before reading the bank (a read during the job may return garbage).
+
+Bench:
+
+    python3 bench/dump.py --addr 28 --len 990 --compare bench/ref/259e-cap1-flat.bin
+    python3 bench/dump.py --addr 5e --len 750 --polldone
+    python3 bench/dump.py --addr 5c --len 63120 --first-wait 20000 --silence 3000 --remoteenable
+
+starts a job, polls the status every 0.5 s, reads `extent` bytes from FRAM 0 and writes them to `--out`
+(`--compare` checks them against a flat bank). `--polldone` and `--remoteenable` send the module gates first, on
+the owner's say-so. Results are in `bench/RESULTS.md` ("PR 2"), the PR text in `../../docs/pr/PR2.md`.
 
 ## /version
 

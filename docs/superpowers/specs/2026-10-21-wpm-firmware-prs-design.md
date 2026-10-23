@@ -112,6 +112,8 @@ Firmware (v1.18 source):
   `sendQuery(addr)` (0x1A), `sendBackupPresets`, `sendRestorePresets`, `sendPollingComplete`,
   `sendRemoteEnable/Disable`; `i2c_guard` blocks the slave ISR while mastering.
 - A module answers QUERY (0x1A) with the 5-byte identity ACK `04 22 <addr> 1C FF`; 0x13 version frames follow only a front-panel hold (bench 2026-10-22).
+- Module gates for BACKUP (bench 2026-10-22): the 272e writes the card only after a bus POLL_DONE since its power-up (`/bus/polldone`, harmless to repeat); the 251e's BACKUP handler is gated on its remote-enable flag (bus 0x16, `/remoteenable`, also sent by stock poll-on-start), and 0x16 is a general-call frame that arms every module on the bus, including ones switched off at the panel. The firmware never sends either on its own.
+- A module answers a BACKUP with its 0x0A completion frame even when its gate is closed (251e: immediately, 0 bytes), so a completion frame before any data is an acknowledgement, not the end of the transfer.
 - Flash budget: app 108,612 bytes of 248 KB. FRAM scratch `0x000000–0x02BD18` (179,481 bytes) holds a
   staged card image or an OTA image; both fit (largest card image 151,984 bytes; app ≤ ~120 KB).
 
@@ -245,12 +247,24 @@ Each PR is a branch off `master`, independently mergeable, with its own README s
 - Busy rules: while a scan runs `/bus/scan`, `/ota/commit`, `/getpresets?addr=`, `/setpresets?addr=` and
   `/bus/polldone` answer `busy`. Capability `bus`; `version` 1.20.
 
-### PR 2 — byte-counting capture (GET_DUMP)
+### PR 2 — byte-counting capture (GET_DUMP) — keys frozen as built (1.21)
 
-- `/dump?addr=XX&len=N&first_wait_ms=M` (defaults: `len` unknown → silence mode as stock,
-  `first_wait_ms` 5000) → starts the job; `/dump/status` → `{"state":...,"received":N,"expected":N,
-  "complete_frame":b,"error":...}`; data is read with `/readmemory` as today. Offsets applied, flat
-  bank from 0. `/getpresets` itself is unchanged.
+- `/dump?addr=HH[&len=N][&first_wait_ms=M][&silence_ms=S]` → `{"ok":true}`; refusals `{"ok":false,"error":"busy|args"}`
+  (`args`: `addr` missing or not two hex digits in 08..77, an unknown key, a non-decimal value, `len` > 0x2BD18).
+  Defaults/clamps: `len` 0 = silence mode; `first_wait_ms` 5000, 200..60000; `silence_ms` 1000, 200..20000.
+- `/dump/status` → `{"state":"idle|sending|waiting|transferring|done|failed","addr":"28","expected":N,"received":N,
+  "extent":N,"lines":N,"dropped":N,"complete_frame":b,"early_done":N,"error":0|4|5,"elapsed_ms":N,"addr_log":"50 50 00"}`;
+  `addr_log` is diagnostic. `/dump/abort` → `{"ok":true}`, state `idle`.
+- End: completion frame after data, `received >= len`, or `silence_ms` without a byte → `done`; no first byte in
+  `first_wait_ms` → `failed` 5; master send refused or failed → `failed` 4. A completion frame before any data
+  counts in `early_done` and does not end the job.
+- Data lines `[off_hi][off_lo][data]` from I2C 0x50 are applied at the offset: flat bank from FRAM 0, byte-identical
+  to a Xenomorpher GET_DUMP; `extent != received` means holes. Destination filter on the matched address
+  (data from 0x50, completion from general call); other general-call frames reach the stock decoder.
+- Busy: `/bus/scan`, `/bus/polldone`, `/getpresets?addr`, `/setpresets?addr`, `/ota/commit`, `/dump`, `/remoteenable`,
+  `/remotedisable`, `/savepreset`, `/recallpreset`, `/sendmidibytes` and the seven direct MIDI routes answer `busy`
+  during a dump; stock master sends are refused while a bus job runs; `/readmemory` stays available (read after
+  `done`). `/getpresets` itself is unchanged. Capability `dump`; `version` 1.21.
 
 ### PR 3 — card-read visibility (FW_STATUS) and quiet boot
 
