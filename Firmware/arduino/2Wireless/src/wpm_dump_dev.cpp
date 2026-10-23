@@ -11,6 +11,7 @@
 // Defined in 2Wireless.ino.
 bool wpm_dump_master_backup(uint8_t addr);
 void framWrite(int addr, uint8_t value);
+void wpm_stock_decode_frame(const uint8_t* f, int n);  // the stock >4-byte general-call decoder
 
 static const uint32_t READ_IDLE_MS = 50;    // no SEND while a module read is this recent (as the scan)
 static const uint32_t READ_BUSY_MS = 1000;  // /dump refuses within this of a module read
@@ -31,8 +32,12 @@ bool wpm_dump_active() {
 
 void wpm_dump_loop() {
   // Modules read presets from the WPM with interrupts off and no timeouts: do not master the bus
-  // right after a read (the first-wait window starts when the BACKUP goes out, so deferring is free).
-  if (job.state() == WPM_DUMP_SENDING && wpm_bus_read_recent(READ_IDLE_MS)) return;
+  // right after a read. The hold is capped at the job's first_wait_ms (measured from start): after
+  // that the BACKUP is reported as not sent (error 4) instead of holding forever.
+  if (job.state() == WPM_DUMP_SENDING && wpm_bus_read_recent(READ_IDLE_MS)) {
+    if (job.elapsed_ms(millis()) >= job.first_wait_ms()) job.send_failed(millis());
+    return;
+  }
   if (job.step(millis()) == WPM_DUMP_ACT_SEND_BACKUP) {
     if (!wpm_dump_master_backup(job.addr())) job.send_failed(millis());
   }
@@ -51,7 +56,9 @@ static void data_line(const uint8_t* f, int n, bool drop_past_expected) {
   uint32_t written = 0;
   for (uint32_t i = 0; i < cnt; i++) {
     uint32_t pos = offset + i;
-    if (pos >= WPM_DUMP_SCRATCH_END) break;  // never reach the settings or the OTA record
+    // Defensive: a u16 offset plus a 255-byte line stays below WPM_DUMP_SCRATCH_END (0x2BD18), so
+    // this never triggers today; it keeps a future wider offset away from the settings and OTA record.
+    if (pos >= WPM_DUMP_SCRATCH_END) break;
     framWrite((int)pos, f[2 + i]);
     written++;
   }
@@ -61,30 +68,55 @@ static void data_line(const uint8_t* f, int n, bool drop_past_expected) {
 
 static bool is_complete_frame(const uint8_t* f, int n) { return n == 5 && f[0] == 0x04 && f[3] == 0x0A; }
 
-void wpm_dump_isr_frame(int howMany) {
-  (void)howMany;  // the whole buffer is drained below; it holds at most 256 bytes, which bounds every loop
-  uint8_t f[256];
-  int n = 0;
-  while (Wire.available() > 0) {
-    int b = Wire.read();
-    if (n < (int)sizeof f) f[n++] = (uint8_t)b;
-  }
-  const uint8_t a = Wire.lastAddress();
+static void log_addr(uint8_t a) {
   if (addr_log_n < ADDR_LOG_MAX) {
     addr_log[addr_log_n] = a;
     addr_log_n = addr_log_n + 1;
   }
+}
+
+// Reads the whole pending transaction (at most 256 bytes, the ring buffer size).
+static int drain(uint8_t* f, int cap) {
+  int n = 0;
+  while (Wire.available() > 0) {
+    int b = Wire.read();
+    if (n < cap) f[n++] = (uint8_t)b;
+  }
+  return n;
+}
+
+bool wpm_dump_isr_frame(int howMany) {
+  (void)howMany;
+  uint8_t f[256];
+  const uint8_t a = Wire.lastAddress();
 #if WPM_DUMP_ADDR_FILTER
   if (a == CARD_I2C_ADDR) {
+    int n = drain(f, sizeof f);
+    if (n > 0) log_addr(a);
     data_line(f, n, false);
-  } else if (is_complete_frame(f, n)) {
-    job.on_complete_frame(f[2]);
+    return true;
   }
-  // Any other general-call frame (MIDI clock, 0x13 display) is consumed and ignored: the bytes are
-  // already read, so it cannot go back to the stock path. Stock drops them during /getpresets too.
+  if (a == 0x00 && Wire.available() == 5) {
+    // A 5-byte general-call frame: the completion frame, or MIDI clock / a 0x13 display frame
+    // that must keep working. Peek is not available, so read it and forward it to the stock decoder.
+    int n = drain(f, sizeof f);
+    log_addr(a);
+    if (is_complete_frame(f, n)) {
+      wpm_bus_note_frame();
+      job.on_complete_frame(f[2]);
+    } else {
+      wpm_stock_decode_frame(f, n);
+    }
+    return true;
+  }
+  if (Wire.available() > 0) log_addr(a);
+  return false;  // any other general-call frame: the stock path reads it unchanged
 #else
+  int n = drain(f, sizeof f);
+  if (n > 0) log_addr(a);
   if (is_complete_frame(f, n)) job.on_complete_frame(f[2]);
   else data_line(f, n, true);
+  return true;
 #endif
 }
 

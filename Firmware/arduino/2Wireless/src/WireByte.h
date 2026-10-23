@@ -23,7 +23,7 @@
 #include "api/HardwareI2C.h"
 #include "variant.h"
 #include "SERCOM.h"
-#include "wpm_dump_dev.h"  // WPM_DUMP_ADDR_FILTER
+#include "wpm_dump_config.h"  // WPM_DUMP_ADDR_FILTER
 
  // WIRE_HAS_END means Wire has end()
 #define WIRE_HAS_END 1

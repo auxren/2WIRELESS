@@ -16,19 +16,18 @@
 #include <Arduino.h>
 #include <WiFi101.h>
 
-// Experiment (Task 2): the vendored Wire exposes the address that matched for the current
-// transaction (WireByte.cpp, Wire.lastAddress()), and the dump handler then applies data lines only
-// from transactions addressed to 0x50. If the bench shows the DATA register does not hold the
-// address, build with -DWPM_DUMP_ADDR_FILTER=0 (or flip this) to fall back to shape parsing.
-#ifndef WPM_DUMP_ADDR_FILTER
-#define WPM_DUMP_ADDR_FILTER 1
-#endif
+#include "wpm_dump_config.h"  // WPM_DUMP_ADDR_FILTER
+
+// Notes: while a dump runs, MIDI from USB and the stock bus senders are refused (busy). /readmemory
+// and /writememory stay available, but the ISR writes FRAM concurrently: a read may return
+// garbage and a write may be lost, so clients wait for state "done" before reading the bank.
 
 bool wpm_dump_active();  // job state SENDING, WAITING or TRANSFERRING
 void wpm_dump_loop();    // call once per loop() pass (main loop only), after wpm_bus_loop()
-// ISR: receiveEvent calls this instead of the stock paths while wpm_dump_active(). Consumes every
-// byte of the transaction.
-void wpm_dump_isr_frame(int howMany);
+// ISR: receiveEvent calls this while wpm_dump_active(). Returns true when the frame was handled
+// (data line, completion frame, or a 5-byte general-call frame forwarded to the stock decoder);
+// false leaves every byte unread for the stock receive path (other general-call frames).
+bool wpm_dump_isr_frame(int howMany);
 
 // urlString: "...GET /dump?addr=28&len=990 ...".
 void wpm_dump_handle_start(WiFiClient& client, const String& urlString);

@@ -1367,40 +1367,27 @@ void setPassword(String password){
   }
 }
 
-void receiveEvent(int howMany) {
-    if(i2c_guard) return; //master busy
-    DEBUG_PRINTLN("receiveEvent");
-    if (wpm_dump_active()) { wpm_dump_isr_frame(howMany); return; } //byte-counting capture (/dump) owns the receive path
-    if (write_i2c_to_fram) {
-      while (Wire.available() > 0) { 
-        uint8_t data = Wire.read();
-        //Cache to FRAM because MKR1000 is too slow to process data using a ring buffer.
-        framWrite(write_counter,data);
-        write_counter++;
-      }
-    } else {
-      if (Wire.available() > 4) {
+//Stock decode of a general-call frame of more than 4 bytes (formerly inline in receiveEvent): MIDI clock to USB,
+//module firmware display messages, and the bus-scan hooks. Called from the ISR; f holds the whole frame.
+//Bytes beyond the end of f read as 0xFF, like Wire.read() on an empty buffer.
+void wpm_stock_decode_frame(const uint8_t* f, int n) {
         wpm_bus_note_frame();
         int command = 0;
-        command = command + (Wire.read() << 24);
-        command = command + (Wire.read() << 16);
-        command = command + (Wire.read() << 8);
-        command = command + Wire.read();
+        command = command + (f[0] << 24);
+        command = command + (f[1] << 16);
+        command = command + (f[2] << 8);
+        command = command + f[3];
         //Module identity ACK (reply to QUERY): 04 22|00 <module addr> 1C FF
         if (((command >> 24) & 0xFF) == 0x04 && (command & 0xFF) == 0x1C) wpm_bus_on_query_reply((command >> 8) & 0xFF);
         DEBUG_PRINTHEXLN(command);
         if (((command & MIDI_EVENT) == MIDI_EVENT) && getSendMidiToUsb()){
           //clock messages
-          switch(Wire.read()) {
+          switch(f[4]) {
             //Endpoint is 2 found by trial and error
             case 0xF8  : memcpy(midiUsbData, MIDI_CLK, 4); break;
             case 0xFA  : memcpy(midiUsbData, MIDI_CLK_START, 4); break;
             case 0xFB  : memcpy(midiUsbData, MIDI_CLK_CONT, 4); break;
             case 0xFC  : memcpy(midiUsbData, MIDI_CLK_STOP, 4); break;
-            //case 0xF8  : USB_Send(2, MIDI_CLK, 4);        MidiUSB.flush();break; 
-            //case 0xFA  : USB_Send(2, MIDI_CLK_START, 4);  MidiUSB.flush();break;
-            //case 0xFB  : USB_Send(2, MIDI_CLK_CONT, 4);   MidiUSB.flush();break;
-            //case 0xFC  : USB_Send(2, MIDI_CLK_STOP, 4);   MidiUSB.flush();break;
           }
         } else if ((command & DISPLAY_EVENT) == DISPLAY_EVENT) {
           //Firmware display messages
@@ -1412,7 +1399,7 @@ void receiveEvent(int howMany) {
           int byteCount=0;
           uint8_t ver7[7];
           while (byteCount < 7) {
-            uint8_t vb = Wire.read();
+            uint8_t vb = (4 + byteCount < n) ? f[4 + byteCount] : 0xFF;
             ver7[byteCount] = vb;
             moduleVersion = moduleVersion + char(vb);
             byteCount++;
@@ -1422,6 +1409,27 @@ void receiveEvent(int howMany) {
           wpm_bus_on_version_frame(moduleAddr, ver7);
           setDisplayMessage(0,moduleVersion);
         }
+}
+
+void receiveEvent(int howMany) {
+    if(i2c_guard) return; //master busy
+    DEBUG_PRINTLN("receiveEvent");
+    if (wpm_dump_active() && wpm_dump_isr_frame(howMany)) return; //byte-counting capture (/dump); false = leave this frame to the stock path
+    if (write_i2c_to_fram) {
+      while (Wire.available() > 0) { 
+        uint8_t data = Wire.read();
+        //Cache to FRAM because MKR1000 is too slow to process data using a ring buffer.
+        framWrite(write_counter,data);
+        write_counter++;
+      }
+    } else {
+      //Read the whole frame first, then decode from the buffer: the same decoder serves the general-call
+      //frames that the /dump ISR path forwards (wpm_stock_decode_frame). Stock only acted on frames > 4 bytes.
+      uint8_t frame[256];
+      int fn = 0;
+      while (Wire.available() > 0 && fn < (int)sizeof frame) frame[fn++] = (uint8_t)Wire.read();
+      if (fn > 4) {
+        wpm_stock_decode_frame(frame, fn);
         Wire.flush();
       }
    } 
@@ -1497,6 +1505,7 @@ void switchToSlave(){
 }
 
 void sendRemoteEnable() {    
+    if (wpm_bus_scan_active() || wpm_dump_active()) return; //bus job owns the bus
     //Remote Enable
     if (masterBeginTransmission(0) == 0) {
       if (v2version) {
@@ -1514,6 +1523,7 @@ void sendRemoteEnable() {
 }
 
 void sendRemoteDisable() {
+    if (wpm_bus_scan_active() || wpm_dump_active()) return; //bus job owns the bus
     //Remote Disable
     if (masterBeginTransmission(0) == 0) {
       if (v2version) {
@@ -1600,6 +1610,7 @@ bool wpm_bus_master_polldone() {
 }
 
 void sendSavePreset(byte preset) {
+    if (wpm_bus_scan_active() || wpm_dump_active()) return; //bus job owns the bus
     //Save Preset
     //Preset=0-29
     preset = preset & 0x1F;
@@ -1620,6 +1631,7 @@ void sendSavePreset(byte preset) {
 }
 
 void sendRecallPreset(byte preset) {
+    if (wpm_bus_scan_active() || wpm_dump_active()) return; //bus job owns the bus
     DEBUG_PRINT("Recall preset:");
     DEBUG_PRINTHEXLN(preset);
     //Recall Preset
@@ -2119,7 +2131,12 @@ void handleWifiRequest(WiFiClient client, String urlString){
   if (urlString.indexOf("/v2") >= 0) {
       v2version = true;
   } 
-  if (urlString.indexOf("/remoteenable") >= 0) {
+  if ((urlString.indexOf("/remoteenable") >= 0 || urlString.indexOf("/remotedisable") >= 0 ||
+       urlString.indexOf("/savepreset?preset") >= 0 || urlString.indexOf("/recallpreset?preset") >= 0 ||
+       urlString.indexOf("/sendmidibytes") >= 0) && (wpm_bus_scan_active() || wpm_dump_active())) {
+    wpm_send_json(client, wpm_json_err("busy")); //bus scan or dump owns the bus
+  }
+  else if (urlString.indexOf("/remoteenable") >= 0) {
     writeHeader(client,"HTTP/1.1 200 OK","Content-type:text/plain",0);
     DEBUG_PRINTLN("Remote Enable Received"); 
     sendRemoteEnable();
@@ -3111,6 +3128,7 @@ void handleBank1(uint32_t epAddr){
 }
 
 void processMidiMessage(midiEventPacket_t midiMessage){
+  if (wpm_bus_scan_active() || wpm_dump_active()) return; //MIDI is dropped while a bus job owns the bus
   DEBUG_MIDI_PRINT("Received: ");
   DEBUG_MIDI_PRINTHEX(midiMessage.header);
   uint8_t chan = midiMessage.byte1 & 0x0F;

@@ -46,6 +46,7 @@ class WpmDumpJob {
   WpmDumpState state() const { return state_; }
   uint8_t addr() const { return addr_; }
   uint32_t expected() const { return expected_; }
+  uint32_t first_wait_ms() const { return first_wait_; }
   uint32_t received() const { return received_; }
   uint32_t extent() const { return extent_; }  // max offset+n
   uint32_t lines() const { return lines_; }
