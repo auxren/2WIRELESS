@@ -115,3 +115,24 @@ Final device state: `bin/2Wireless-1.19` running, installed by its own loader ov
 The final review (I1) changed the loader, so the full image was rebuilt: `bin/2Wireless-1.19.ino.bin` is now 130276 B, crc32 839D4C36 (loader 8192 B, crc32 BFF0ADDF, built on demand by build.sh because the loader bin was absent; the regenerated blob is byte-identical to the committed one). `bin/2Wireless-1.19.ota.bin` is unchanged (113892 B, crc32 27D00D24). SHA256SUMS rewritten.
 
 Checked again from the committed files: flashed over USB (bossac-20261022-142036.log); `/version` 1.19 + loader, `/setup` "Firmware v1.19", `/currentpreset`, `/ssid`, `/getpresets?addr=76` empty, USB name "Studio H Software USB Midi" (after the USB flash `app_crc32` still named the previous OTA image, 0A53CC0E: the documented caveat). OTA release -> variant b (commit 14:23:29, `last:"ok"`, 0A53CC0E, build b) -> `bin/2Wireless-1.19.ota.bin` (commit 14:25:57, `last:"ok"`, 27D00D24, no build tag). The churn and 259e-capture checks were not repeated: the app image is byte-identical to the one checked at 13:28. The slow-loader re-bench of the fix (round trip, brick drill, cuts at ~5 s and ~10 s) is in POWERCUT.md.
+
+# PR 1: bus scan and status (firmware 1.20), 2026-10-22 16:50-17:35
+
+Builds: fcc0e73 (first 1.20), efd9117 (QUERY reply = 0x1C ACK), 04a0d61 (final: chunked status, busy error, V2 latch; image 134548 B crc32 3CFA9168, ota 118164 B crc32 6BE0802E, loader unchanged BFF0ADDF). All flashed over USB; AP up 65-68 s after reset each time. Bus: 259e at 0x28, 251e at 0x5c plus six other modules.
+
+| Check | Result |
+|---|---|
+| `/version` | 1.20, `capabilities` `["version","ota","bus"]`, loader present. PASS |
+| `/bus/status` before any frame | `{"wpm_present":true,"bus_quiet":true,"dialect":0,"last_error":0}`; `dialect` 1 after the first scan. PASS |
+| First single-address scans (fcc0e73) | 0x28 and 0x5c: `done`, count 0, while `dialect` flipped to 1 and the 0x13 display cache (FRAM 0x02C0FE) stayed unchanged: the reply arrived but was not a 0x13 frame. Root cause: a module answers QUERY with the 5-byte identity ACK `04 22 <addr> 1C FF` (Xenomorphicle `try_query_reply`, 200e-conformance.md), which stock `receiveEvent` discards. FAIL, fixed in efd9117 |
+| Single-address scans (efd9117, 04a0d61) | `bus_scan.py --first 28 --last 28`: found 0x28, `ver_valid:false`, `ver_src:"none"`, 2.1-2.3 s; same for 0x5c; upper-case `5C` accepted. PASS |
+| `window=2000` | one-address scan 4.1 s instead of 2.1 s. PASS |
+| Full sweep 08..77 | 51.2 s (efd9117) and 52.4 s (04a0d61), 8 found both times: 0x0e, 0x11, 0x20 (`FBA30.0`, `ver_valid:true`, `ver_src:"cache"` from the stock display cache), 0x23, 0x28, 0x3c, 0x5c, 0x5e. PASS |
+| Concurrency during a sweep | `/bus/scan` -> busy; `/ota/commit?len=2&crc32=0` -> busy; `/bus/polldone` -> busy; `/getpresets?addr=28` -> busy; `/currentpreset` answered 20/20 polls at 1 s (both builds). PASS |
+| Arguments | `first=00&last=05` -> `args`; `first=30&last=28` -> ok, status `done`, `count:0`, `idx:0`. PASS |
+| Chunked `/bus/scan/status` (04a0d61) | raw reply: `71` CRLF `{...one entry...}` CRLF `0` CRLF CRLF. PASS |
+| `/bus/polldone` idle | `{"ok":true}`; `/bus/status.last_error` showed 1 afterwards (the busy refusals during the earlier sweep; it persists until the next accepted scan). PASS |
+| 259e after POLL_DONE | `/getpresets?addr=28` capture identical to cap1 (1069 bytes). PASS |
+| Stock routes | `/ssid`, `/currentpreset`, `/setup` "Firmware v1.20", `/getpresets?addr=76` empty. PASS |
+
+Not tested: a scan on a V2 bus (`unsupported`; no V2 unit); a `send_timeout` (needs a bus fault); more than ~26 found entries (the chunked writer is verified only with 8 entries and by reading the stock pattern it mirrors).
