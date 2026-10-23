@@ -14,11 +14,11 @@ OTA). This description lists only PR 2's own changes.
 - The job logic is a pure C++ state machine, `libraries/WpmCommon/src/wpm_dump.{h,cpp}`, with desktop tests
   (`make -C Firmware/arduino/test`); the routes and the I2C receive hook are in
   `2Wireless/src/wpm_dump_dev.{h,cpp}`, wired into `2Wireless.ino`.
-- Release files: `Firmware/arduino/2Wireless/bin/2Wireless-1.21.ino.bin` (full image, 138052 B, crc32
-  5E7136DA, sha256 `5b5956858f32d2b8011e16f253c8479d582624c4416db0f6bca59983a1696e73`) and
-  `2Wireless-1.21.ota.bin` (app only, 121668 B, crc32 57B917BF, sha256
-  `ff00531369455cc6b747d5654e50a91069e41280f9aeb06ab61242f3d9355f7d`), both listed in `bin/SHA256SUMS`. A unit
-  already on 1.20 updates over Wi-Fi with `/ota/commit?len=121668&crc32=57B917BF` after staging the
+- Release files: `Firmware/arduino/2Wireless/bin/2Wireless-1.21.ino.bin` (full image, 138316 B, crc32
+  01282445, sha256 `668da24ed850771c535b4f4776130d60195235a13264dbcdacd26f0df3aab1ae`) and
+  `2Wireless-1.21.ota.bin` (app only, 121932 B, crc32 88C9BB14, sha256
+  `52f045369e7904f6db156c74f086443c3f2f1bf930b6916c1acd78b80b197e77`), both listed in `bin/SHA256SUMS`. A unit
+  already on 1.20 updates over Wi-Fi with `/ota/commit?len=121932&crc32=88C9BB14` after staging the
   `.ota.bin`.
 
 ## Routes
@@ -170,6 +170,9 @@ The final build (fcf7c0e) was flashed over USB.
 - `send_timeout` (error 4) was not exercised.
 - The V2 bus was not tested (no V2 unit).
 - `/readmemory` during a dump returns an in-progress (or stale) bank until `state` is `done`; the bytes themselves are not corrupted. Wait for `done`.
+- Because every FRAM byte access now masks interrupts for the SPI burst, `/readmemory` is about 35% slower than
+  on 1.20 (the read-back of a 122 KB OTA stage took 32 s instead of 20 s); `/writememory` throughput is unchanged
+  (45 s for the same stage). Measured on the bench, not optimised.
 - USB MIDI arriving during a job is dropped.
 - The 251e needs the remote enable (see the module gates); the 272e needs POLL_DONE.
 - A 5-byte general-call frame that is not a completion is forwarded to the stock decoder; a general-call
@@ -190,7 +193,7 @@ With the Mac joined to the WPM AP, from the repository root:
     python3 Firmware/arduino/bench/dump.py --addr 5c --len 63120 --first-wait 20000 --silence 3000 --remoteenable
 
 OTA from 1.20: stage with `python3 bench/ota_push.py 2Wireless/bin/2Wireless-1.21.ota.bin`, then
-`bench/wpm.sh get 'ota/commit?len=121668&crc32=57B917BF'` and `bash bench/wifi_rejoin.sh`.
+`bench/wpm.sh get 'ota/commit?len=121932&crc32=88C9BB14'` and `bash bench/wifi_rejoin.sh`.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 

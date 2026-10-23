@@ -162,10 +162,10 @@ starts a scan, polls the status every 2 s and prints one line per module and the
 
 ## Byte-counting capture (1.21)
 
-Release files in `2Wireless/bin/`: `2Wireless-1.21.ino.bin` (138052 B, crc32 5E7136DA, sha256
-`5b5956858f32d2b8011e16f253c8479d582624c4416db0f6bca59983a1696e73`) / `2Wireless-1.21.ota.bin` (121668 B,
-crc32 57B917BF, sha256 `ff00531369455cc6b747d5654e50a91069e41280f9aeb06ab61242f3d9355f7d`), listed in
-`bin/SHA256SUMS` next to the 1.19 and 1.20 pairs. An OTA from 1.20 uses `/ota/commit?len=121668&crc32=57B917BF`.
+Release files in `2Wireless/bin/`: `2Wireless-1.21.ino.bin` (138316 B, crc32 01282445, sha256
+`668da24ed850771c535b4f4776130d60195235a13264dbcdacd26f0df3aab1ae`) / `2Wireless-1.21.ota.bin` (121932 B,
+crc32 88C9BB14, sha256 `52f045369e7904f6db156c74f086443c3f2f1bf930b6916c1acd78b80b197e77`), listed in
+`bin/SHA256SUMS` next to the 1.19 and 1.20 pairs. An OTA from 1.20 uses `/ota/commit?len=121932&crc32=88C9BB14`.
 Capability `dump`. All replies are HTTP 200 JSON; refusals are `{"ok":false,"error":"busy|args"}`.
 
 - `GET /dump?addr=HH[&len=N][&first_wait_ms=M][&silence_ms=S]` -> `{"ok":true}`. Masters a BACKUP to the module

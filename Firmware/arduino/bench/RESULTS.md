@@ -182,3 +182,14 @@ Not tested: a MIDI clock or 0x13 frame arriving mid-dump (no 252e clock source o
 | 251e dump while polling `/currentpreset` and `/version` every 0.5 s | capture done 8.05 s, 63120 B, 1013 lines, identical to the earlier capture; 48/48 polls answered. PASS (the scenario of review finding I1) |
 | 259e `len=990` | 145 ms, identical to the reference. PASS |
 | 272e `len=750` after `/bus/polldone` | 119 ms, identical to the earlier dump. PASS |
+
+### Final build 6a7ccce = release 1.21 (image 138316 B crc32 01282445, ota 121932 B crc32 88C9BB14)
+
+| Check | Result |
+|---|---|
+| `/version` | 1.21, capabilities `["version","ota","bus","dump"]`. PASS |
+| `/writememory` under the new lock | the 259e flat bank (990 B, 4 POSTs of 64-byte elements) written and read back identical. PASS |
+| OTA staging and loader with this image | `ota_push.py` of the 1.21 `.ota.bin`: push 45.0 s, verify 31.7 s (read-back is slower than on 1.20, ~20 s, because every `framRead` now masks interrupts briefly), `/ota/commit?len=121932&crc32=88C9BB14` → `last:"ok"`, `app_crc32` 88C9BB14, 1.21 back up after the rejoin. PASS |
+| 259e `len=990` after the OTA | 142 ms, identical to the reference. PASS |
+| Stock `/getpresets?addr=28` | identical to cap1. PASS |
+| Short scan 08..0f with `/remoteenable` and `/midiclock` during it (fix round 4 build) | both → busy; scan found 0x0e; `bus_quiet` true afterwards. PASS |
