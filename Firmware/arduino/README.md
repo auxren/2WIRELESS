@@ -188,7 +188,7 @@ Busy rule (during a dump, and the same refusals and USB-MIDI drop during a bus s
 another `/dump`, `/remoteenable`, `/remotedisable`, `/savepreset`, `/recallpreset`, `/sendmidibytes` and the seven
 direct MIDI routes answer `busy`; every stock master send is refused inside `masterBeginTransmission` while a bus
 job runs, and USB-MIDI and poll-on-start sends are dropped. `/readmemory` and `/writememory` stay available, but
-the client must wait for state `done` before reading the bank (a read during the job may return garbage).
+the client must wait for state `done` before reading the bank (a read during the job returns an in-progress or stale bank; the bytes themselves are not corrupted).
 
 Bench:
 

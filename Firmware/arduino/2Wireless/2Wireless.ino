@@ -950,7 +950,8 @@ void loop() {
 //main loop may be inside its own FRAM SPI transaction (a route reading the preset or writing a setting): an
 //ISR write landing between a main-loop WREN and WRITE, or inside a read, would be lost or would corrupt the
 //main-loop access. In ISR context (VECTACTIVE != 0) the lock is a no-op. The I2C slave stretches SCL while
-//the ISR is masked; the longest masked span is framWriteHexString's 128-byte run (about 300 us).
+//the ISR is masked; the longest masked span is one framWriteHexString burst: WREN, the 4-byte header and up to
+//128 data bytes, about 1 us per byte, so at most ~150 us.
 static inline uint32_t framLock() {
     if (SCB->ICSR & SCB_ICSR_VECTACTIVE_Msk) return 0xFFFFFFFFu;
     uint32_t p = __get_PRIMASK();
@@ -990,27 +991,38 @@ void framWrite(int addr, uint8_t value){
 }
 
 void framWriteHexString(int addr, String value){
-    //Address on the MB85RS2MTA is 18 bits total, requiring 3 bytes. 
-    uint8_t addr_byte_upper = (0x3F0000 & addr) >>16;
-    uint8_t addr_byte_middle = (0x00FF00 & addr) >>8;
-    uint8_t addr_byte_lower = (0x0000FF & addr);
-    uint32_t lk = framLock();
-    framEnableWrite();
-    SPI.beginTransaction(spiSettings);
-    digitalWrite(SPI_CS, LOW); //Set CS low to select chip
-    SPI.transfer(FRAM_WRITE); // send write enable OPCODE
-    SPI.transfer(addr_byte_upper); // send address upper byte
-    SPI.transfer(addr_byte_middle); // send address middle byte
-    SPI.transfer(addr_byte_lower); // send address lower byte
-    String remainder = value;
-    while (remainder.length() >= 2){
-        uint8_t data = (int)strtol(remainder.substring(0,2).c_str(), nullptr, 16); 
-        SPI.transfer(data); // send value
-        remainder = remainder.substring(2,remainder.length());
+    //The hex is decoded into a local buffer BEFORE the lock is taken (String work is slow), then each chunk of
+    //up to 128 bytes is written in its own locked WREN + WRITE burst at the advancing address: the same bytes
+    //land at the same addresses as a single burst would put them. A trailing odd character is ignored, as before.
+    uint8_t buf[128];
+    int total = value.length() / 2;
+    int done = 0;
+    while (done < total) {
+        int n = total - done;
+        if (n > (int)sizeof buf) n = sizeof buf;
+        for (int i = 0; i < n; i++) {
+            char pair[3] = { value.charAt(2 * (done + i)), value.charAt(2 * (done + i) + 1), 0 };
+            buf[i] = (uint8_t)(int)strtol(pair, nullptr, 16);
+        }
+        int a = addr + done;
+        //Address on the MB85RS2MTA is 18 bits total, requiring 3 bytes.
+        uint8_t addr_byte_upper = (0x3F0000 & a) >>16;
+        uint8_t addr_byte_middle = (0x00FF00 & a) >>8;
+        uint8_t addr_byte_lower = (0x0000FF & a);
+        uint32_t lk = framLock();
+        framEnableWrite();
+        SPI.beginTransaction(spiSettings);
+        digitalWrite(SPI_CS, LOW); //Set CS low to select chip
+        SPI.transfer(FRAM_WRITE); // send write enable OPCODE
+        SPI.transfer(addr_byte_upper); // send address upper byte
+        SPI.transfer(addr_byte_middle); // send address middle byte
+        SPI.transfer(addr_byte_lower); // send address lower byte
+        for (int i = 0; i < n; i++) SPI.transfer(buf[i]); // send values
+        digitalWrite(SPI_CS, HIGH); //Set CS high to de-select
+        SPI.endTransaction();
+        framUnlock(lk);
+        done += n;
     }
-    digitalWrite(SPI_CS, HIGH); //Set CS high to de-select
-    SPI.endTransaction();
-    framUnlock(lk);
 }
 
 uint8_t framRead(int addr){

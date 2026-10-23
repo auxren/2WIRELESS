@@ -98,8 +98,8 @@ While a dump runs (`sending`, `waiting`, `transferring`):
   `/midiclockstart`, `/midiclockstop`, `/midiclock`, `/midifinetune`, `/midibend`).
 - Every stock master send is refused inside `masterBeginTransmission` while a bus job (scan or dump) runs;
   only the job's own sends get through. USB-MIDI sends and poll-on-start sends are dropped during a job.
-- `/readmemory` and `/writememory` stay available, but the ISR writes FRAM concurrently, so a read can return
-  garbage and a write can be lost: the client must wait for `state` `done` before reading the bank.
+- `/readmemory` and `/writememory` stay available, but the ISR writes FRAM concurrently, so a read returns an
+  in-progress (or stale) bank and a write into the capture area is overwritten by the lines (the bytes are not corrupted): the client must wait for `state` `done` before reading the bank.
 - The same busy answers and sender refusals also apply during a bus scan, not only a dump (USB MIDI is dropped
   for the whole sweep), and for a 50 ms cool-down after the last transaction addressed to the card
   (0x50): a finished or aborted dump's module may still be streaming lines or sending its completion.
@@ -107,7 +107,7 @@ While a dump runs (`sending`, `waiting`, `transferring`):
 - FRAM atomicity: while a dump runs the I2C ISR writes FRAM. Every FRAM primitive in the sketch
   (`framRead`, `framWrite`, `framWriteHexString`) is a critical section in thread mode (PRIMASK saved and
   restored; a no-op inside the ISR), so `/currentpreset`, `/version`, `/bus/status` and the settings routes
-  are safe during a dump. The I2C slave stretches SCL while the ISR is masked (longest span about 300 us).
+  are safe during a dump. The I2C slave stretches SCL while the ISR is masked (longest span about 150 us: one FRAM burst of at most 128 bytes; `/writememory` hex is decoded before the lock is taken).
   `/readmemory` of the capture area during a dump still returns an in-progress bank: read it after `done`.
 - All other routes (`/currentpreset`, `/version`, `/bus/status`, `/dump/status`, ...) keep answering.
 
@@ -169,7 +169,7 @@ The final build (fcf7c0e) was flashed over USB.
   pass-through to the stock decoder is verified by reading the code only.
 - `send_timeout` (error 4) was not exercised.
 - The V2 bus was not tested (no V2 unit).
-- `/readmemory` during a dump may read garbage; wait for `done`.
+- `/readmemory` during a dump returns an in-progress (or stale) bank until `state` is `done`; the bytes themselves are not corrupted. Wait for `done`.
 - USB MIDI arriving during a job is dropped.
 - The 251e needs the remote enable (see the module gates); the 272e needs POLL_DONE.
 - A 5-byte general-call frame that is not a completion is forwarded to the stock decoder; a general-call

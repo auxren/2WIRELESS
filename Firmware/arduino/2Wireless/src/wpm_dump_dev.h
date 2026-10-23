@@ -24,7 +24,7 @@
 // While a dump runs the I2C ISR writes FRAM; the sketch's FRAM primitives are critical sections in
 // thread mode, so ordinary routes (/currentpreset, /version, settings) are safe meanwhile. /readmemory
 // and /writememory stay available, but the ISR writes FRAM concurrently: a read may return
-// garbage and a write may be lost, so clients wait for state "done" before reading the bank.
+// stale (in-progress) bank and a write into the capture area is overwritten by the lines, so clients wait for state "done" before reading the bank.
 
 bool wpm_dump_active();  // job state SENDING, WAITING or TRANSFERRING
 void wpm_dump_loop();    // call once per loop() pass (main loop only), after wpm_bus_loop()

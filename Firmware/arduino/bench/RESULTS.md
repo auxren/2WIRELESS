@@ -173,3 +173,12 @@ Builds: db3a590 (first 1.21), f9bf14e (early-completion rule), 5f3394b (review f
 | `/bus/scan` single address afterwards | found 0x28. PASS |
 
 Not tested: a MIDI clock or 0x13 frame arriving mid-dump (no 252e clock source on the bench; the pass-through to the stock decoder is verified by reading); `send_timeout`; USB-MIDI arriving during a dump (dropped by design); the V2 bus.
+
+### Fix round 4 build f55067e (FRAM primitives atomic against the ISR; 50 ms card-write cool-down)
+
+| Check | Result |
+|---|---|
+| `/version` | 1.21, capabilities `["version","ota","bus","dump"]`. PASS |
+| 251e dump while polling `/currentpreset` and `/version` every 0.5 s | capture done 8.05 s, 63120 B, 1013 lines, identical to the earlier capture; 48/48 polls answered. PASS (the scenario of review finding I1) |
+| 259e `len=990` | 145 ms, identical to the reference. PASS |
+| 272e `len=750` after `/bus/polldone` | 119 ms, identical to the earlier dump. PASS |
