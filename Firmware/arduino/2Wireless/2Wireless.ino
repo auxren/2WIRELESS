@@ -15,6 +15,7 @@
 #include "src/wpm_version.h"
 #include "src/wpm_ota.h"
 #include "src/wpm_bus.h"
+#include "src/wpm_dump_dev.h"
 #include "src/wpm_json.h"
 #include <WiFi101.h>
 #include <SPI.h>
@@ -868,6 +869,7 @@ void loop() {
   diagDump();
 #endif
   wpm_bus_loop();
+  wpm_dump_loop();
   // compare the previous status to the current status
   if (status != WiFi.status()) {
     // it has changed update the variable
@@ -1368,6 +1370,7 @@ void setPassword(String password){
 void receiveEvent(int howMany) {
     if(i2c_guard) return; //master busy
     DEBUG_PRINTLN("receiveEvent");
+    if (wpm_dump_active()) { wpm_dump_isr_frame(howMany); return; } //byte-counting capture (/dump) owns the receive path
     if (write_i2c_to_fram) {
       while (Wire.available() > 0) { 
         uint8_t data = Wire.read();
@@ -1662,6 +1665,31 @@ void sendBackupPresets(byte address) {
       masterEndTransmission();
       switchToSlave();
     }
+}
+
+//Byte-counting capture (/dump): sendBackupPresets() byte for byte, but reports whether the master send began.
+//Uses the physical V2 pin like the bus-scan helpers, so a /v2/ URL prefix does not change the frame.
+bool wpm_dump_master_backup(uint8_t address) {
+    if (masterBeginTransmission(0) != 0) return false;
+    if (wpm_v2_pin()) {
+        Wire.write(0x2D);
+        Wire.write(address); //Module address
+        Wire.write(0x00); //Card memory address LSB
+        Wire.write(0x00); //Card memory address MSB
+        Wire.write(CARD_ADDRESS); //Card address lower byte. Upper byte is always 0x50. 
+    } else {
+        Wire.write(0x07);
+        Wire.write(0x00);
+        Wire.write(0x22);
+        Wire.write(0x04);
+        Wire.write(address); //Module address
+        Wire.write(CARD_ADDRESS); //Card address lower byte. Upper byte is always 0x50. 
+        Wire.write(0x00); //Card memory address LSB
+        Wire.write(0x00); //Card memory address MSB
+    }
+    masterEndTransmission();
+    switchToSlave();
+    return true;
 }
 
 void sendRestorePresets(byte address) {
@@ -2253,8 +2281,8 @@ void handleWifiRequest(WiFiClient client, String urlString){
     DEBUG_HTTP_PRINTHEXLN(midiMessage.byte3);
     processMidiMessage(midiMessage);
   }
-  else if (urlString.indexOf("/getpresets?addr") >= 0 && wpm_bus_scan_active()) {
-    wpm_send_json(client, wpm_json_err("busy")); //bus scan owns the bus
+  else if (urlString.indexOf("/getpresets?addr") >= 0 && (wpm_bus_scan_active() || wpm_dump_active())) {
+    wpm_send_json(client, wpm_json_err("busy")); //bus scan or dump owns the bus
   }
   else if (urlString.indexOf("/getpresets?addr") >= 0) {
     writeHeader(client,"HTTP/1.1 200 OK","Content-type:text/json",-1); //-1 is chunked encoding
@@ -2314,8 +2342,8 @@ void handleWifiRequest(WiFiClient client, String urlString){
     client.println("0");
     client.println();
     write_i2c_to_fram = false; //Stop Caching incoming i2c to FRAM 
-  } else if (urlString.indexOf("/setpresets?addr") >= 0 && wpm_bus_scan_active()) {
-    wpm_send_json(client, wpm_json_err("busy")); //bus scan owns the bus
+  } else if (urlString.indexOf("/setpresets?addr") >= 0 && (wpm_bus_scan_active() || wpm_dump_active())) {
+    wpm_send_json(client, wpm_json_err("busy")); //bus scan or dump owns the bus
   } else if (urlString.indexOf("/setpresets?addr") >= 0) {
     writeHeader(client,"HTTP/1.1 200 OK","Content-type:text/plain",0);
     DEBUG_PRINTLN("Set Presets Received"); 
@@ -2856,6 +2884,12 @@ void handleWifiRequest(WiFiClient client, String urlString){
       tmp = setupPageString.substring(i,i+500);
     }
     client.println();   // The HTTP response ends with another blank line:
+  } else if (urlString.indexOf("/dump/status") >= 0) {
+    wpm_dump_handle_status(client);
+  } else if (urlString.indexOf("/dump/abort") >= 0) {
+    wpm_dump_handle_abort(client);
+  } else if (urlString.indexOf("/dump") >= 0) {
+    wpm_dump_handle_start(client, urlString);
   } else if (urlString.indexOf("/bus/scan/status") >= 0) {
     wpm_bus_handle_scan_status(client);
   } else if (urlString.indexOf("/bus/scan") >= 0) {

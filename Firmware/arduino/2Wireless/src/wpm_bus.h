@@ -13,6 +13,7 @@ void wpm_bus_note_frame();
 // ISR: the module's 0x1C identity ACK (04 22|00 <addr> 1C FF), the real reply to QUERY.
 void wpm_bus_on_query_reply(uint8_t addr);
 bool wpm_bus_scan_active();  // scan state == SCANNING
+bool wpm_bus_read_recent(uint32_t ms);  // a module read within the last ms milliseconds
 
 // urlString: "...GET /bus/scan?first=HH&last=HH&window=MS ...".
 void wpm_bus_handle_scan(WiFiClient& client, const String& urlString);

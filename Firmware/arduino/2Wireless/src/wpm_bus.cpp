@@ -1,6 +1,7 @@
 #include "wpm_bus.h"
 
 #include "wpm_bus_scan.h"
+#include "wpm_dump_dev.h"
 #include "wpm_json.h"
 
 // Defined in 2Wireless.ino.
@@ -39,6 +40,8 @@ void wpm_bus_on_query_reply(uint8_t addr) { scan.on_query_reply(addr); }
 
 bool wpm_bus_scan_active() { return scan.state() == WPM_SCAN_SCANNING; }
 
+bool wpm_bus_read_recent(uint32_t ms) { return readRecent(ms); }
+
 void wpm_bus_loop() {
   // Modules read presets from the WPM with interrupts off and no timeouts: never start a send
   // while reads are recent (step() is skipped, which defers the SEND phase; the reply window and
@@ -56,7 +59,7 @@ void wpm_bus_handle_scan(WiFiClient& client, const String& urlString) {
     wpm_send_json(client, wpm_json_err("unsupported"));
     return;
   }
-  if (wpm_bus_scan_active() || readRecent(READ_BUSY_MS)) {
+  if (wpm_bus_scan_active() || wpm_dump_active() || readRecent(READ_BUSY_MS)) {
     scan.set_error(WPM_BUS_ERR_BUSY);
     wpm_send_json(client, wpm_json_err("busy"));
     return;
@@ -138,7 +141,7 @@ void wpm_bus_handle_status(WiFiClient& client) {
 }
 
 void wpm_bus_handle_polldone(WiFiClient& client) {
-  if (wpm_bus_scan_active() || readRecent(READ_BUSY_MS)) {
+  if (wpm_bus_scan_active() || wpm_dump_active() || readRecent(READ_BUSY_MS)) {
     scan.set_error(WPM_BUS_ERR_BUSY);
     wpm_send_json(client, wpm_json_err("busy"));
     return;

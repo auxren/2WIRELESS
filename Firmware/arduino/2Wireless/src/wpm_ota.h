@@ -10,6 +10,6 @@ void wpm_ota_handle_abort(WiFiClient& client);
 // urlString: "...GET /ota/commit?len=N&crc32=HEX ...".
 void wpm_ota_handle_commit(WiFiClient& client, const String& urlString);
 
-// True while a bus job (scan) runs: bus jobs and /ota/commit are mutually exclusive. A scan never
-// touches FRAM staging.
+// True while a bus job (scan or dump) runs: bus jobs and /ota/commit are mutually exclusive. A
+// dump writes the FRAM scratch area, which is also where an image is staged.
 bool wpm_ota_busy();

@@ -34,6 +34,7 @@ TwoWireByte::TwoWireByte(SERCOM * s, uint8_t pinSDA, uint8_t pinSCL)
   this->_uc_pinSDA=pinSDA;
   this->_uc_pinSCL=pinSCL;
   transmissionBegun = false;
+  _lastAddress = 0xFF;
 }
 
 void TwoWireByte::begin(void) {
@@ -224,6 +225,12 @@ void TwoWireByte::onService(void)
     if(sercom->isStopDetectedWIRE() || 
         (sercom->isAddressMatch() && sercom->isRestartDetectedWIRE() && !sercom->isMasterReadOperationWIRE())) //Stop or Restart detected
     {
+#if WPM_DUMP_ADDR_FILTER
+      // WPM: on a restart the address of the NEW transaction is in DATA now, but the receive
+      // callback below still belongs to the old one: remember it and publish it after the callback.
+      bool wpmAddrNew = sercom->isAddressMatch();
+      uint8_t wpmAddr = wpmAddrNew ? (uint8_t)(SERCOM2->I2CS.DATA.reg >> 1) : 0xFF;
+#endif
       sercom->prepareAckBitWIRE();
       sercom->prepareCommandBitsWire(0x03);
 
@@ -234,9 +241,19 @@ void TwoWireByte::onService(void)
       }
       
       rxBuffer.clear();
+#if WPM_DUMP_ADDR_FILTER
+      if (wpmAddrNew) _lastAddress = wpmAddr;
+#endif
     }
     else if(sercom->isAddressMatch())  //Address Match
     {
+#if WPM_DUMP_ADDR_FILTER
+      // WPM: SAMD21 I2CS puts the matched address (and R/W bit) in DATA while AMATCH is set. Read the
+      // raw register BEFORE the ACK/command below (not readDataWIRE(), which has smart-mode side
+      // effects). The WPM bus is on sercom2 (SERCOM2 is PERIPH_WIRE for this board). 7-bit: a
+      // general call reads 0x00, the card address 0x50.
+      _lastAddress = (uint8_t)(SERCOM2->I2CS.DATA.reg >> 1);
+#endif
       sercom->prepareAckBitWIRE();
       sercom->prepareCommandBitsWire(0x03);
 

@@ -23,6 +23,7 @@
 #include "api/HardwareI2C.h"
 #include "variant.h"
 #include "SERCOM.h"
+#include "wpm_dump_dev.h"  // WPM_DUMP_ADDR_FILTER
 
  // WIRE_HAS_END means Wire has end()
 #define WIRE_HAS_END 1
@@ -66,12 +67,17 @@ class TwoWireByte : public HardwareI2C
 
     void onService(void);
 
+    // WPM: 7-bit slave address (R/W bit stripped) matched by the most recent address-match
+    // interrupt: 0x50 for the card address, 0x00 for a general call, 0xFF before any match or when
+    // WPM_DUMP_ADDR_FILTER is 0. Valid in the receive callback of that transaction.
+    uint8_t lastAddress() const { return _lastAddress; }
   private:
     SERCOM * sercom;
     uint8_t _uc_pinSDA;
     uint8_t _uc_pinSCL;
 
     bool transmissionBegun;
+    volatile uint8_t _lastAddress;
 
     // RX Buffer
     arduino::RingBufferN<256> rxBuffer;

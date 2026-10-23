@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "wpm_crc32.h"
+#include "wpm_dump_dev.h"
 #include "wpm_bus.h"
 #include "wpm_json.h"
 #include "wpm_ota_record.h"
@@ -14,7 +15,7 @@
 uint8_t framRead(int addr);
 void framWrite(int addr, uint8_t value);
 
-bool wpm_ota_busy() { return wpm_bus_scan_active(); }
+bool wpm_ota_busy() { return wpm_bus_scan_active() || wpm_dump_active(); }
 
 static void readRecord(uint8_t raw[WPM_OTA_RECORD_LEN], WpmOtaRecord* rec) {
   for (size_t i = 0; i < WPM_OTA_RECORD_LEN; i++) raw[i] = framRead((int)(WPM_OTA_RECORD_ADDR + i));

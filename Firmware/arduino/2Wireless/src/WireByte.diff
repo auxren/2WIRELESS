@@ -7,9 +7,16 @@
 # copy (class TwoWireByte, global Wire, SERCOM2_Handler) carries that one behavioural change;
 # the rename and the include are mechanical. See the design spec, section 4.
 #
+# Second change (PR 2, /dump): onService() records the 7-bit slave address that matched the current
+# transaction (lastAddress(): 0x50 card, 0x00 general call) by reading the raw SERCOM2 I2CS.DATA
+# register at address match, BEFORE the ACK/command bits are written (not via readDataWIRE(), which
+# has smart-mode side effects). Used only by the dump ISR handler; compiled out with
+# WPM_DUMP_ADDR_FILTER=0 (wpm_dump_dev.h). On a restart the new address is published after the
+# receive callback of the previous transaction has run.
+#
 --- /Users/oren/Library/Arduino15/packages/arduino/hardware/samd/1.8.14/libraries/Wire/Wire.cpp	2026-10-21 20:21:29
-+++ src/WireByte.cpp	2026-10-21 23:01:28
-@@ -24,11 +24,11 @@
++++ 2Wireless/src/WireByte.cpp	2026-10-22 17:29:35
+@@ -24,19 +24,20 @@
  #include <Arduino.h>
  #include <wiring_private.h>
  
@@ -23,8 +30,9 @@
  {
    this->sercom = s;
    this->_uc_pinSDA=pinSDA;
-@@ -36,7 +36,7 @@
+   this->_uc_pinSCL=pinSCL;
    transmissionBegun = false;
++  _lastAddress = 0xFF;
  }
  
 -void TwoWire::begin(void) {
@@ -32,7 +40,7 @@
    //Master Mode
    sercom->initMasterWIRE(TWI_CLOCK);
    sercom->enableWIRE();
-@@ -45,7 +45,7 @@
+@@ -45,7 +46,7 @@
    pinPeripheral(_uc_pinSCL, g_APinDescription[_uc_pinSCL].ulPinType);
  }
  
@@ -41,7 +49,7 @@
    //Slave mode
    sercom->initSlaveWIRE(address, enableGeneralCall);
    sercom->enableWIRE();
-@@ -54,17 +54,17 @@
+@@ -54,17 +55,17 @@
    pinPeripheral(_uc_pinSCL, g_APinDescription[_uc_pinSCL].ulPinType);
  }
  
@@ -62,7 +70,7 @@
  {
    if(quantity == 0)
    {
-@@ -105,12 +105,12 @@
+@@ -105,12 +106,12 @@
    return byteRead;
  }
  
@@ -77,7 +85,7 @@
    // save address of target and clear buffer
    txAddress = address;
    txBuffer.clear();
-@@ -124,7 +124,7 @@
+@@ -124,7 +125,7 @@
  //  2 : NACK on transmit of address
  //  3 : NACK on transmit of data
  //  4 : Other error
@@ -86,7 +94,7 @@
  {
    transmissionBegun = false ;
  
-@@ -154,12 +154,12 @@
+@@ -154,12 +155,12 @@
    return 0;
  }
  
@@ -101,7 +109,7 @@
  {
    // No writing, without begun transmission or a full buffer
    if ( !transmissionBegun || txBuffer.isFull() )
-@@ -172,7 +172,7 @@
+@@ -172,7 +173,7 @@
    return 1 ;
  }
  
@@ -110,7 +118,7 @@
  {
    //Try to store all data
    for(size_t i = 0; i < quantity; ++i)
-@@ -186,38 +186,38 @@
+@@ -186,44 +187,50 @@
    return quantity;
  }
  
@@ -156,7 +164,39 @@
  {
    if ( sercom->isSlaveWIRE() )
    {
-@@ -257,13 +257,13 @@
+     if(sercom->isStopDetectedWIRE() || 
+         (sercom->isAddressMatch() && sercom->isRestartDetectedWIRE() && !sercom->isMasterReadOperationWIRE())) //Stop or Restart detected
+     {
++#if WPM_DUMP_ADDR_FILTER
++      // WPM: on a restart the address of the NEW transaction is in DATA now, but the receive
++      // callback below still belongs to the old one: remember it and publish it after the callback.
++      bool wpmAddrNew = sercom->isAddressMatch();
++      uint8_t wpmAddr = wpmAddrNew ? (uint8_t)(SERCOM2->I2CS.DATA.reg >> 1) : 0xFF;
++#endif
+       sercom->prepareAckBitWIRE();
+       sercom->prepareCommandBitsWire(0x03);
+ 
+@@ -234,9 +241,19 @@
+       }
+       
+       rxBuffer.clear();
++#if WPM_DUMP_ADDR_FILTER
++      if (wpmAddrNew) _lastAddress = wpmAddr;
++#endif
+     }
+     else if(sercom->isAddressMatch())  //Address Match
+     {
++#if WPM_DUMP_ADDR_FILTER
++      // WPM: SAMD21 I2CS puts the matched address (and R/W bit) in DATA while AMATCH is set. Read the
++      // raw register BEFORE the ACK/command below (not readDataWIRE(), which has smart-mode side
++      // effects). The WPM bus is on sercom2 (SERCOM2 is PERIPH_WIRE for this board). 7-bit: a
++      // general call reads 0x00, the card address 0x50.
++      _lastAddress = (uint8_t)(SERCOM2->I2CS.DATA.reg >> 1);
++#endif
+       sercom->prepareAckBitWIRE();
+       sercom->prepareCommandBitsWire(0x03);
+ 
+@@ -257,13 +274,13 @@
      {
        if (sercom->isMasterReadOperationWIRE())
        {
@@ -176,7 +216,7 @@
        } else { //Received data
          if (rxBuffer.isFull()) {
            sercom->prepareNackBitWIRE(); 
-@@ -290,7 +290,7 @@
+@@ -290,7 +307,7 @@
      #define PERIPH_WIRE          sercom3
      #define WIRE_IT_HANDLER      SERCOM3_Handler
    #endif // PERIPH_WIRE
@@ -185,7 +225,7 @@
  
    void WIRE_IT_HANDLER(void) {
      Wire.onService();
-@@ -298,7 +298,7 @@
+@@ -298,7 +315,7 @@
  #endif
  
  #if WIRE_INTERFACES_COUNT > 1
@@ -194,7 +234,7 @@
  
    void WIRE1_IT_HANDLER(void) {
      Wire1.onService();
-@@ -306,7 +306,7 @@
+@@ -306,7 +323,7 @@
  #endif
  
  #if WIRE_INTERFACES_COUNT > 2
@@ -203,7 +243,7 @@
  
    void WIRE2_IT_HANDLER(void) {
      Wire2.onService();
-@@ -314,7 +314,7 @@
+@@ -314,7 +331,7 @@
  #endif
  
  #if WIRE_INTERFACES_COUNT > 3
@@ -212,7 +252,7 @@
  
    void WIRE3_IT_HANDLER(void) {
      Wire3.onService();
-@@ -322,7 +322,7 @@
+@@ -322,7 +339,7 @@
  #endif
  
  #if WIRE_INTERFACES_COUNT > 4
@@ -221,7 +261,7 @@
  
    void WIRE4_IT_HANDLER(void) {
      Wire4.onService();
-@@ -330,7 +330,7 @@
+@@ -330,7 +347,7 @@
  #endif
  
  #if WIRE_INTERFACES_COUNT > 5

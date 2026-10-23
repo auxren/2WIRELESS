@@ -12,7 +12,7 @@ size_t wpm_version_format(char* out, size_t cap, const WpmVersionInfo& info) {
   else snprintf(crc, sizeof crc, "unknown");
   int n = snprintf(out, cap,
                    "{\"version\":\"%s\",%s\"board\":\"%s\",%s"
-                   "\"capabilities\":[\"version\",\"ota\",\"bus\"],\"getpresets_wait\":false,"
+                   "\"capabilities\":[\"version\",\"ota\",\"bus\",\"dump\"],\"getpresets_wait\":false,"
                    "\"usbMode\":%u,\"pollOnStart\":%u,\"reset_cause\":\"%s\","
                    "\"uptime_s\":%lu,\"rssi\":%d,\"tcp_sockets_free\":null,"
                    "\"app_crc32\":\"%s\"}",
