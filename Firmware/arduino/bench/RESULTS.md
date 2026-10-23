@@ -142,3 +142,34 @@ Not tested: a scan on a V2 bus (`unsupported`; no V2 unit); a `send_timeout` (ne
 Build 304afbd/34e3bdc (image 134532 B crc32 52BA34BE, ota 118148 B crc32 5CD2BF86) flashed. With the 259e flat bank written to FRAM (restore_259e.py --no-restore, read-back True): `/setpresets?addr=28` then an immediate `/bus/scan?first=28&last=28` -> `{"ok":false,"error":"busy"}`, `/bus/status` `bus_quiet:false`, `last_error:1`; the same scan 3 s later -> ok, status done with 0x28 found; a `/getpresets?addr=28` recapture afterwards is identical to cap1 (1069 bytes). PASS. Regression on the same build: see the rows below.
 
 | Regression on 304afbd | full sweep 08..77: 50.8 s, the same 8 modules; `/bus/polldone` ok afterwards. PASS |
+
+# PR 2: byte-counting capture (firmware 1.21), 2026-10-22 evening
+
+Builds: db3a590 (first 1.21), f9bf14e (early-completion rule), 5f3394b (review fixes: general-call pass-through, master guards). Bus: 259e 0x28 (990 B bank, 37 lines), 272e 0x5E (750 B, 35 lines), 251e 0x5C (63,120 B, 1013 lines), plus 0x0E MARF, 0x11 257e, 0x20 CSR, 0x23, 0x3C. All device runs via `bench/dump.py`.
+
+| Check | Result |
+|---|---|
+| `/version` | 1.21, capabilities `["version","ota","bus","dump"]`. PASS |
+| 259e `/dump?addr=28&len=990` | done in 162 ms, received 990, extent 990, lines 37, dropped 0; FRAM 0..989 byte-identical to `bench/ref/259e-cap1-flat.bin` (the stock capture de-interleaved). PASS |
+| 259e silence mode (`/dump?addr=28`) | done by the completion frame (`complete_frame:true`), 144 ms, same 990 bytes. PASS |
+| Matched-address experiment | `addr_log` "50 50 50 …" on data lines; the general-call completion frame recognised at address 0x00: `I2CS.DATA` holds the matched address at AMATCH on the SAMD21. The destination filter stays on (`WPM_DUMP_ADDR_FILTER 1`). PASS |
+| 272e `/dump?addr=5e&len=750` after `/bus/polldone` | done 143 ms, 750 B, 35 lines; repeat byte-identical; vs the Xenomorpher reference bank of 2026-10-17: 710/750 bytes equal at shift 0, only records 0-2 (25-byte slots) differ (presets edited since, confirmed by the app session). Layout guarantee met. PASS |
+| 251e, first attempts (`first_wait` 20 s and 60 s, FRAM zeroed or not) | done at 26 ms with 0 bytes and a completion frame (db3a590), then, with the early-completion rule (f9bf14e), failed error 5 after the first wait with `early_done:1` and periodic card reads from the module (`addr_log` "00 50 50 …", n=0 transactions = master reads). Root cause: the 251e BACKUP handler is gated on its remote-enable flag (bus 0x16), which stock poll-on-start sends and this unit (poll-on-start off) had never received since power-up; the handler emits the 0x0A completion even when gated. Documented, not a firmware defect |
+| 251e after the stock `/remoteenable` | `/dump?addr=5c&len=63120&first_wait_ms=20000&silence_ms=3000` → done, received 63120, extent 63120, lines 1013, 8.0 s; repeat byte-identical (sha256 abeed4052172bc80c167fc18367c1a695214431e569a74ffe13fb3f1a0e4ce56). The module stock could never capture. PASS |
+| Absent module `/dump?addr=76&first_wait_ms=3000` | failed, error 5, elapsed 3021 ms. PASS |
+| Busy matrix during a waiting dump | `/bus/scan`, `/bus/polldone`, `/getpresets?addr`, `/setpresets?addr`, `/ota/commit`, a second `/dump` → busy; `/readmemory` answers; `/dump/abort` → ok, state idle. PASS |
+| Stock `/getpresets?addr=28` on 1.21 | identical to cap1. PASS |
+| `/bus/scan` single address after dumps | found 0x28. PASS |
+
+### Final build fcf7c0e (image 138052 B crc32 5E7136DA, ota 121668 B crc32 57B917BF)
+
+| Check | Result |
+|---|---|
+| 259e `len=990` | done 147 ms, 990 B, 37 lines, identical to `bench/ref/259e-cap1-flat.bin`. PASS |
+| 272e `len=750` after `/bus/polldone` | done 134 ms, 750 B, 35 lines, identical to the earlier 1.21 dump. PASS |
+| 251e `len=63120` after `/remoteenable` (first_wait 20 s, silence 3 s) | done 8.07 s, 63120 B, 1013 lines, `complete_frame:true`, identical to the earlier capture (sha256 abeed405…). PASS |
+| Busy matrix during a waiting dump (0x76, 20 s first wait) | `/bus/scan`, `/bus/polldone`, `/getpresets?addr`, `/setpresets?addr`, `/ota/commit`, a second `/dump`, `/remoteenable`, `/savepreset?preset=1`, `/midiclock`, `/midinoteon` → `{"ok":false,"error":"busy"}`; `/readmemory` answers; `/dump/abort` → ok, state idle. PASS |
+| Stock `/getpresets?addr=28` afterwards | identical to cap1. PASS |
+| `/bus/scan` single address afterwards | found 0x28. PASS |
+
+Not tested: a MIDI clock or 0x13 frame arriving mid-dump (no 252e clock source on the bench; the pass-through to the stock decoder is verified by reading); `send_timeout`; USB-MIDI arriving during a dump (dropped by design); the V2 bus.
