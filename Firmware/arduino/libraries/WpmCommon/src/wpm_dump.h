@@ -40,7 +40,8 @@ class WpmDumpJob {
   // A data line landed: n bytes written at offset (after the caller bounded it).
   void on_data(uint32_t offset, uint32_t n);
   void on_dropped(uint32_t n);                // bytes beyond the scratch area, not written
-  void on_complete_frame(uint8_t from_addr);  // counted as stray if from another address
+  void on_complete_frame(uint8_t from_addr);  // stray if from another address; early_done if no data yet
+  // (a 251e acknowledges the BACKUP with a 0x0A frame seconds before it streams); else ends the job
 
   WpmDumpState state() const { return state_; }
   uint8_t addr() const { return addr_; }
@@ -50,6 +51,7 @@ class WpmDumpJob {
   uint32_t lines() const { return lines_; }
   uint32_t dropped() const { return dropped_; }
   bool complete_frame() const { return complete_; }
+  uint32_t early_done() const { return early_; }  // completion frames from the job address before any data
   WpmBusError error() const { return err_; }
   uint32_t stray_frames() const { return stray_; }
   // Milliseconds since start; frozen at the moment the job ended or was aborted. 0 before any start.
@@ -69,13 +71,13 @@ class WpmDumpJob {
   uint32_t seen_ = 0;  // received_ as of the last step()
   WpmBusError err_ = WPM_BUS_ERR_NONE;
   // ISR-shared.
-  volatile uint32_t received_ = 0, extent_ = 0, lines_ = 0, dropped_ = 0, stray_ = 0;
+  volatile uint32_t received_ = 0, extent_ = 0, lines_ = 0, dropped_ = 0, stray_ = 0, early_ = 0;
   volatile bool complete_ = false;
 };
 
 const char* wpm_dump_state_str(WpmDumpState s);  // "idle"|"sending"|"waiting"|"transferring"|"done"|"failed"
 // {"state":"transferring","addr":"28","expected":990,"received":528,"extent":528,"lines":8,"dropped":0,
-//  "complete_frame":false,"error":0,"elapsed_ms":1234}
-// Returns the length written, or 0 if n is too small. The worst case is 198 bytes plus the NUL, so
+//  "complete_frame":false,"early_done":0,"error":0,"elapsed_ms":1234}
+// Returns the length written, or 0 if n is too small. The worst case is 216 bytes plus the NUL, so
 // routes pass a 256-byte buffer.
 size_t wpm_dump_status_json(const WpmDumpJob& j, uint32_t now_ms, char* buf, size_t n);

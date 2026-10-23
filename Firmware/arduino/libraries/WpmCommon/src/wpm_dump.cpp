@@ -22,6 +22,7 @@ WpmBusError WpmDumpJob::start(uint8_t addr, uint32_t expected, uint32_t first_wa
   lines_ = 0;
   dropped_ = 0;
   stray_ = 0;
+  early_ = 0;
   complete_ = false;
   state_ = WPM_DUMP_SENDING;
   return WPM_BUS_ERR_NONE;
@@ -89,10 +90,12 @@ void WpmDumpJob::on_data(uint32_t offset, uint32_t n) {
 void WpmDumpJob::on_dropped(uint32_t n) { dropped_ = dropped_ + n; }
 
 void WpmDumpJob::on_complete_frame(uint8_t from_addr) {
-  if (from_addr == addr_)
-    complete_ = true;
-  else
+  if (from_addr != addr_)
     stray_ = stray_ + 1;
+  else if (received_ == 0)
+    early_ = early_ + 1;  // acknowledgement, not the end: the first-byte wait keeps running
+  else
+    complete_ = true;
 }
 
 uint32_t WpmDumpJob::elapsed_ms(uint32_t now_ms) const {
@@ -117,11 +120,12 @@ size_t wpm_dump_status_json(const WpmDumpJob& j, uint32_t now_ms, char* buf, siz
   int w = std::snprintf(buf, n,
                         "{\"state\":\"%s\",\"addr\":\"%02x\",\"expected\":%lu,\"received\":%lu,"
                         "\"extent\":%lu,\"lines\":%lu,\"dropped\":%lu,\"complete_frame\":%s,"
-                        "\"error\":%d,\"elapsed_ms\":%lu}",
+                        "\"early_done\":%lu,\"error\":%d,\"elapsed_ms\":%lu}",
                         wpm_dump_state_str(j.state()), static_cast<unsigned>(j.addr()),
                         static_cast<unsigned long>(j.expected()), static_cast<unsigned long>(j.received()),
                         static_cast<unsigned long>(j.extent()), static_cast<unsigned long>(j.lines()),
                         static_cast<unsigned long>(j.dropped()), j.complete_frame() ? "true" : "false",
+                        static_cast<unsigned long>(j.early_done()),
                         static_cast<int>(j.error()), static_cast<unsigned long>(j.elapsed_ms(now_ms)));
   if (w < 0 || static_cast<size_t>(w) >= n) {
     buf[0] = '\0';

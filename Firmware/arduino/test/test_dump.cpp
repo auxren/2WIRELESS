@@ -81,14 +81,42 @@ int main() {
     CHECK(j.complete_frame());
     CHECK(j.error() == WPM_BUS_ERR_NONE);
   }
-  {  // completion in WAITING (empty bank)
+  {  // completion_in_waiting: a completion frame before any data is an acknowledgement
     WpmDumpJob j;
     running(j);
     j.on_complete_frame(0x28);
     j.step(10);
+    CHECK(j.state() == WPM_DUMP_WAITING);
+    CHECK(j.early_done() == 1);
+    CHECK(!j.complete_frame());
+  }
+  {  // early_completion_does_not_end_waiting
+    WpmDumpJob j;
+    running(j, 0, 5000, 1000, 0);
+    j.on_complete_frame(0x28);
+    j.step(26);
+    CHECK(j.state() == WPM_DUMP_WAITING);
+    CHECK(j.early_done() == 1);
+    j.on_data(0, 66);
+    j.step(3000);
+    CHECK(j.state() == WPM_DUMP_TRANSFERRING);
+    j.on_complete_frame(0x28);
+    j.step(3010);
     CHECK(j.state() == WPM_DUMP_DONE);
-    CHECK(j.received() == 0);
+    CHECK(j.complete_frame());
+    CHECK(j.early_done() == 1);
     CHECK(j.error() == WPM_BUS_ERR_NONE);
+  }
+  {  // early_completion_then_first_wait_fails
+    WpmDumpJob j;
+    running(j, 0, 5000, 1000, 0);
+    j.on_complete_frame(0x28);
+    j.step(26);
+    j.step(5000);
+    CHECK(j.state() == WPM_DUMP_FAILED);
+    CHECK(j.error() == WPM_BUS_ERR_NO_RESPONSE);
+    CHECK(j.early_done() == 1);
+    CHECK(!j.complete_frame());
   }
   {  // stray_completion_ignored
     WpmDumpJob j;
@@ -238,7 +266,7 @@ int main() {
     size_t n = wpm_dump_status_json(idle, 12345, buf, sizeof buf);
     const char* want_idle =
         "{\"state\":\"idle\",\"addr\":\"00\",\"expected\":0,\"received\":0,\"extent\":0,\"lines\":0,"
-        "\"dropped\":0,\"complete_frame\":false,\"error\":0,\"elapsed_ms\":0}";
+        "\"dropped\":0,\"complete_frame\":false,\"early_done\":0,\"error\":0,\"elapsed_ms\":0}";
     CHECK(n == std::strlen(want_idle));
     CHECK(std::strcmp(buf, want_idle) == 0);
 
@@ -249,7 +277,7 @@ int main() {
     n = wpm_dump_status_json(j, 1234, buf, sizeof buf);
     const char* want =
         "{\"state\":\"transferring\",\"addr\":\"28\",\"expected\":990,\"received\":528,\"extent\":528,"
-        "\"lines\":8,\"dropped\":0,\"complete_frame\":false,\"error\":0,\"elapsed_ms\":1234}";
+        "\"lines\":8,\"dropped\":0,\"complete_frame\":false,\"early_done\":0,\"error\":0,\"elapsed_ms\":1234}";
     CHECK(n == std::strlen(want));
     CHECK(std::strcmp(buf, want) == 0);
     CHECK(wpm_dump_status_json(j, 1234, buf, 20) == 0);
