@@ -17,7 +17,6 @@ WpmBusError WpmBusScan::start(uint8_t first, uint8_t last, uint32_t now_ms, uint
   mb_ack = false;
   stray_ = 0;
   err_ = WPM_BUS_ERR_NONE;
-  first_ = first;
   last_ = last;
   addr_ = first;
   idx_ = 0;
@@ -100,7 +99,6 @@ void WpmBusScan::on_version_frame(uint8_t from_addr, const uint8_t* ver, size_t 
     return;
   }
   if (n > WPM_SCAN_VER_LEN) n = WPM_SCAN_VER_LEN;
-  mb_addr = from_addr;
   mb_len = static_cast<uint8_t>(n);
   for (size_t i = 0; i < n; i++) mb_ver[i] = ver[i];
   mb_full = true;
@@ -150,6 +148,50 @@ size_t wpm_scan_status_head_json(WpmScanState s, size_t idx, size_t count, char*
                         wpm_scan_state_str(s), static_cast<unsigned>(idx), static_cast<unsigned>(count));
   if (w < 0 || static_cast<size_t>(w) >= n) return 0;
   return static_cast<size_t>(w);
+}
+
+static int hexVal(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+bool wpm_bus_parse_scan_args(const char* query, uint8_t* first, uint8_t* last, uint32_t* window_ms) {
+  *first = WPM_SCAN_ADDR_MIN;
+  *last = WPM_SCAN_ADDR_MAX;
+  *window_ms = WPM_SCAN_REPLY_MS;
+  const char* p = query ? query : "";
+  while (*p) {
+    const char* end = p;
+    while (*end && *end != '&') end++;
+    const char* eq = p;
+    while (eq < end && *eq != '=') eq++;
+    if (eq < end) {
+      size_t klen = static_cast<size_t>(eq - p);
+      const char* v = eq + 1;
+      size_t vlen = static_cast<size_t>(end - v);
+      bool isFirst = klen == 5 && std::strncmp(p, "first", 5) == 0;
+      bool isLast = klen == 4 && std::strncmp(p, "last", 4) == 0;
+      bool isWin = klen == 6 && std::strncmp(p, "window", 6) == 0;
+      if (isFirst || isLast) {
+        if (vlen != 2) return false;
+        int hi = hexVal(v[0]), lo = hexVal(v[1]);
+        if (hi < 0 || lo < 0) return false;
+        *(isFirst ? first : last) = static_cast<uint8_t>(hi * 16 + lo);
+      } else if (isWin) {
+        if (vlen == 0 || vlen > 6) return false;
+        uint32_t w = 0;
+        for (size_t i = 0; i < vlen; i++) {
+          if (v[i] < '0' || v[i] > '9') return false;
+          w = w * 10 + static_cast<uint32_t>(v[i] - '0');
+        }
+        *window_ms = w < 100 ? 100 : (w > 2000 ? 2000 : w);
+      }
+    }
+    p = *end ? end + 1 : end;
+  }
+  return true;
 }
 
 int wpm_bus_route_match(const char* line, const char* const* candidates, size_t n) {

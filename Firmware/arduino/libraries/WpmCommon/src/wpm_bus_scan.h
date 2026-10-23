@@ -1,8 +1,9 @@
 #pragma once
-// I2C bus scan state machine (one QUERY per address, listen for the 0x13 version frame) and
-// the JSON helpers for its status. Pure C++17, no Arduino dependencies, so it runs on the
-// desktop. on_version_frame() is ISR-safe (plain/volatile field writes only); everything else
-// runs from the main loop.
+// I2C bus scan state machine (one QUERY per address, listen for the module's 0x1C identity ACK;
+// a 0x13 version frame, if one arrives, supplies the version) and the JSON helpers for its
+// status. Pure C++17, no Arduino dependencies, so it runs on the desktop. on_query_reply() and
+// on_version_frame() are ISR-safe (plain/volatile field writes only); everything else runs from
+// the main loop.
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -60,7 +61,6 @@ class WpmBusScan {
   size_t count() const { return count_; }
   const WpmScanFound* found() const { return found_; }
   WpmBusError last_error() const { return err_; }
-  void clear_error() { err_ = WPM_BUS_ERR_NONE; }
   void set_error(WpmBusError e) { err_ = e; }  // device-side routes (args parse, polldone send failure)
   uint32_t stray_replies() const { return stray_; }
   uint32_t reply_ms() const { return reply_ms_; }
@@ -69,14 +69,13 @@ class WpmBusScan {
   enum Phase : uint8_t { PH_SEND, PH_WAIT, PH_GAP };
   WpmScanState state_ = WPM_SCAN_IDLE;
   Phase phase_ = PH_SEND;
-  uint8_t first_ = 0, last_ = 0, addr_ = 0;
+  uint8_t last_ = 0, addr_ = 0;
   size_t idx_ = 0, count_ = 0;
   uint32_t phase_start_ = 0, reply_ms_ = WPM_SCAN_REPLY_MS;
   WpmBusError err_ = WPM_BUS_ERR_NONE;
   WpmScanFound found_[WPM_SCAN_MAX_FOUND] = {};
   // ISR-shared.
   volatile bool window_ = false;  // true only during the WAIT phase
-  volatile uint8_t mb_addr = 0;
   volatile uint8_t mb_len = 0;
   volatile uint8_t mb_ver[WPM_SCAN_VER_LEN] = {};
   volatile bool mb_full = false;  // a 0x13 version frame is in the mailbox
@@ -92,5 +91,13 @@ const char* wpm_scan_state_str(WpmScanState s);  // "idle" | "scanning" | "done"
 size_t wpm_scan_entry_json(const WpmScanFound& f, char* buf, size_t n);
 // Header up to and including "found":[  : {"state":"scanning","idx":3,"count":1,"found":[
 size_t wpm_scan_status_head_json(WpmScanState s, size_t idx, size_t count, char* buf, size_t n);
+// Parses the query of /bus/scan (text after '?', up to the space; NUL-terminated):
+// first=HH&last=HH&window=MS. Defaults 08 / 77 / 300. Hex is exactly two digits, either case;
+// window is decimal digits only (at most 6), clamped to 100..2000. Unknown keys are ignored.
+// Returns false on any malformed value (the outputs are then unspecified).
+bool wpm_bus_parse_scan_args(const char* query, uint8_t* first, uint8_t* last, uint32_t* window_ms);
+// Documents the intended route order (longest path first). The real dispatch is the indexOf chain
+// in 2Wireless.ino, verified by reading the code and by the bench; this helper only pins the
+// intended order in a desktop test.
 // Index of the longest candidate occurring in `line`, or -1.
 int wpm_bus_route_match(const char* line, const char* const* candidates, size_t n);

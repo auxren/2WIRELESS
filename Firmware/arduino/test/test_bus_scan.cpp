@@ -282,6 +282,21 @@ int main() {
     s.query_failed(0);  // SEND phase, no QUERY yet: no-op
     CHECK(s.last_error() == WPM_BUS_ERR_NONE);
   }
+  {  // parse_scan_args
+    uint8_t f, l;
+    uint32_t w;
+    CHECK(wpm_bus_parse_scan_args("", &f, &l, &w) && f == 0x08 && l == 0x77 && w == 300);
+    CHECK(wpm_bus_parse_scan_args("first=5C&last=5e", &f, &l, &w) && f == 0x5c && l == 0x5e && w == 300);
+    CHECK(!wpm_bus_parse_scan_args("first=8", &f, &l, &w));
+    CHECK(!wpm_bus_parse_scan_args("first=0g", &f, &l, &w));
+    CHECK(!wpm_bus_parse_scan_args("window=", &f, &l, &w));
+    CHECK(wpm_bus_parse_scan_args("window=99", &f, &l, &w) && w == 100);
+    CHECK(wpm_bus_parse_scan_args("window=5000", &f, &l, &w) && w == 2000);
+    CHECK(wpm_bus_parse_scan_args("window=450", &f, &l, &w) && w == 450);
+    CHECK(!wpm_bus_parse_scan_args("window=1234567", &f, &l, &w));
+    CHECK(!wpm_bus_parse_scan_args("window=12a", &f, &l, &w));
+    CHECK(wpm_bus_parse_scan_args("foo=1&last=10&bar", &f, &l, &w) && f == 0x08 && l == 0x10);
+  }
   {  // found_cap
     WpmBusScan s;
     CHECK(s.start(WPM_SCAN_ADDR_MIN, WPM_SCAN_ADDR_MAX, 0) == WPM_BUS_ERR_NONE);

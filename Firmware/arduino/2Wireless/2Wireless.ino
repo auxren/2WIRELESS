@@ -1563,8 +1563,12 @@ void sendQuery(byte address) {
 }
 
 // Bus-scan helpers: like sendQuery()/sendPollingComplete() but report whether the master send began.
-bool wpm_bus_master_query(uint8_t address, bool v2) {
-    if (v2) return false; //Query is not supported (v2 latched at scan start)
+bool wpm_v2_pin() {
+    return digitalRead(V2VERSION_PIN);
+}
+
+bool wpm_bus_master_query(uint8_t address) {
+    if (wpm_v2_pin()) return false; //Query is not supported on a V2 bus
     if (masterBeginTransmission(0) != 0) return false;
     Wire.write(0x04);
     Wire.write(address);
