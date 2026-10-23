@@ -39,7 +39,10 @@ void wpm_dump_loop() {
     return;
   }
   if (job.step(millis()) == WPM_DUMP_ACT_SEND_BACKUP) {
-    if (!wpm_dump_master_backup(job.addr())) job.send_failed(millis());
+    wpm_job_master_begin();
+    bool sent = wpm_dump_master_backup(job.addr());
+    wpm_job_master_end();
+    if (!sent) job.send_failed(millis());
   }
 }
 

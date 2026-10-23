@@ -1425,7 +1425,7 @@ void receiveEvent(int howMany) {
     } else {
       //Read the whole frame first, then decode from the buffer: the same decoder serves the general-call
       //frames that the /dump ISR path forwards (wpm_stock_decode_frame). Stock only acted on frames > 4 bytes.
-      uint8_t frame[256];
+      static uint8_t frame[256]; //static: keeps 256 bytes off the ISR stack; receiveEvent cannot re-enter
       int fn = 0;
       while (Wire.available() > 0 && fn < (int)sizeof frame) frame[fn++] = (uint8_t)Wire.read();
       if (fn > 4) {
@@ -1559,6 +1559,7 @@ void sendPollingComplete() {
 
 
 void sendQuery(byte address) {
+    if (wpm_bus_scan_active() || wpm_dump_active()) return; //bus job owns the bus
     //Query Module
     if (v2version) {
         //Nothing. Query is not supported
@@ -1908,6 +1909,8 @@ void sendMidiBend(byte mask, byte bend_lsb, byte bend_msb){
 }
 
 int masterBeginTransmission(int addr){
+  //A bus job (scan or dump) owns the bus: only its own sends (bracketed by wpm_job_master_begin/end) get through.
+  if ((wpm_bus_scan_active() || wpm_dump_active()) && !wpm_job_master_allowed()) return 1;
   i2c_guard = true; //prevent slave interrupt
   int result = 0;
   while (sercom2.isBusBusyWIRE()) {   
@@ -2133,7 +2136,11 @@ void handleWifiRequest(WiFiClient client, String urlString){
   } 
   if ((urlString.indexOf("/remoteenable") >= 0 || urlString.indexOf("/remotedisable") >= 0 ||
        urlString.indexOf("/savepreset?preset") >= 0 || urlString.indexOf("/recallpreset?preset") >= 0 ||
-       urlString.indexOf("/sendmidibytes") >= 0) && (wpm_bus_scan_active() || wpm_dump_active())) {
+       urlString.indexOf("/sendmidibytes") >= 0 ||
+       urlString.indexOf("/midinoteon?chan") >= 0 || urlString.indexOf("/midinoteoff?chan") >= 0 ||
+       urlString.indexOf("/midiclockstart") >= 0 || urlString.indexOf("/midiclockstop") >= 0 ||
+       urlString.indexOf("/midiclock") >= 0 || urlString.indexOf("/midifinetune?chan") >= 0 ||
+       urlString.indexOf("/midibend?chan") >= 0) && (wpm_bus_scan_active() || wpm_dump_active())) {
     wpm_send_json(client, wpm_json_err("busy")); //bus scan or dump owns the bus
   }
   else if (urlString.indexOf("/remoteenable") >= 0) {

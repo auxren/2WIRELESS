@@ -18,7 +18,8 @@
 
 #include "wpm_dump_config.h"  // WPM_DUMP_ADDR_FILTER
 
-// Notes: while a dump runs, MIDI from USB and the stock bus senders are refused (busy). /readmemory
+// Notes: every bus master send is refused while a bus job runs (HTTP routes answer busy; USB MIDI
+// and poll-on-start sends are dropped). /readmemory
 // and /writememory stay available, but the ISR writes FRAM concurrently: a read may return
 // garbage and a write may be lost, so clients wait for state "done" before reading the bank.
 

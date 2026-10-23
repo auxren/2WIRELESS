@@ -13,6 +13,11 @@ void wpm_bus_note_frame();
 // ISR: the module's 0x1C identity ACK (04 22|00 <addr> 1C FF), the real reply to QUERY.
 void wpm_bus_on_query_reply(uint8_t addr);
 bool wpm_bus_scan_active();  // scan state == SCANNING
+// A bus job (scan or dump) owns the bus: masterBeginTransmission() refuses every other sender. The
+// job loops (main loop only) bracket their own sends with begin/end so those get through.
+void wpm_job_master_begin();
+void wpm_job_master_end();
+bool wpm_job_master_allowed();
 bool wpm_bus_read_recent(uint32_t ms);  // a module read within the last ms milliseconds
 
 // urlString: "...GET /bus/scan?first=HH&last=HH&window=MS ...".

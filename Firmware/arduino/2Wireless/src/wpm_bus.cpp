@@ -42,6 +42,11 @@ bool wpm_bus_scan_active() { return scan.state() == WPM_SCAN_SCANNING; }
 
 bool wpm_bus_read_recent(uint32_t ms) { return readRecent(ms); }
 
+static volatile bool job_master = false;
+void wpm_job_master_begin() { job_master = true; }
+void wpm_job_master_end() { job_master = false; }
+bool wpm_job_master_allowed() { return job_master; }
+
 void wpm_bus_loop() {
   // Modules read presets from the WPM with interrupts off and no timeouts: never start a send
   // while reads are recent (step() is skipped, which defers the SEND phase; the reply window and
@@ -50,7 +55,10 @@ void wpm_bus_loop() {
   // sweep runs it once per address; PR 2/4 will master more.
   if (readRecent(READ_IDLE_MS)) return;
   if (scan.step(millis()) == WPM_SCAN_ACT_QUERY) {
-    if (!wpm_bus_master_query(scan.current_addr())) scan.query_failed(millis());
+    wpm_job_master_begin();
+    bool sent = wpm_bus_master_query(scan.current_addr());
+    wpm_job_master_end();
+    if (!sent) scan.query_failed(millis());
   }
 }
 
@@ -146,7 +154,10 @@ void wpm_bus_handle_polldone(WiFiClient& client) {
     wpm_send_json(client, wpm_json_err("busy"));
     return;
   }
-  if (!wpm_bus_master_polldone()) {
+  wpm_job_master_begin();
+  bool sent = wpm_bus_master_polldone();
+  wpm_job_master_end();
+  if (!sent) {
     scan.set_error(WPM_BUS_ERR_SEND_TIMEOUT);
     wpm_send_json(client, wpm_json_err("send_timeout"));
     return;

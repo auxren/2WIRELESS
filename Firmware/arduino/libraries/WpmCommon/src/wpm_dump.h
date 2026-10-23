@@ -79,6 +79,6 @@ class WpmDumpJob {
 const char* wpm_dump_state_str(WpmDumpState s);  // "idle"|"sending"|"waiting"|"transferring"|"done"|"failed"
 // {"state":"transferring","addr":"28","expected":990,"received":528,"extent":528,"lines":8,"dropped":0,
 //  "complete_frame":false,"early_done":0,"error":0,"elapsed_ms":1234}
-// Returns the length written, or 0 if n is too small. The worst case is 216 bytes plus the NUL, so
+// Returns the length written, or 0 if n is too small. The worst case is 222 bytes plus the NUL, so
 // routes pass a 256-byte buffer.
 size_t wpm_dump_status_json(const WpmDumpJob& j, uint32_t now_ms, char* buf, size_t n);
