@@ -75,8 +75,8 @@ Replies `{"ok":true}` and returns the job to `idle` (counters are kept for the s
 ### What a data line is
 
 The module writes its bank to the card, I2C address 0x50, as `[offset_hi][offset_lo][data...]`. Each line is
-written to FRAM at its offset, so the scratch area holds a flat bank from FRAM 0, byte-identical to a
-Xenomorpher GET_DUMP of the same module. If `extent != received` the bank has holes (lines missing or
+written to FRAM at its offset, so the scratch area holds a flat bank from FRAM 0 with the same layout (benched on the 272e: same bank size and record grid, only edited records differ)
+as a Xenomorpher GET_DUMP of the same module. If `extent != received` the bank has holes (lines missing or
 overlapping); the bytes between are whatever the scratch area held before.
 
 ### Destination filter
@@ -100,6 +100,15 @@ While a dump runs (`sending`, `waiting`, `transferring`):
   only the job's own sends get through. USB-MIDI sends and poll-on-start sends are dropped during a job.
 - `/readmemory` and `/writememory` stay available, but the ISR writes FRAM concurrently, so a read can return
   garbage and a write can be lost: the client must wait for `state` `done` before reading the bank.
+- The same busy answers and sender refusals also apply during a bus scan, not only a dump (USB MIDI is dropped
+  for the whole sweep), and for a 50 ms cool-down after the last transaction addressed to the card
+  (0x50): a finished or aborted dump's module may still be streaming lines or sending its completion.
+  `/bus/scan` and `/bus/polldone` additionally keep the 1 s module-read guard.
+- FRAM atomicity: while a dump runs the I2C ISR writes FRAM. Every FRAM primitive in the sketch
+  (`framRead`, `framWrite`, `framWriteHexString`) is a critical section in thread mode (PRIMASK saved and
+  restored; a no-op inside the ISR), so `/currentpreset`, `/version`, `/bus/status` and the settings routes
+  are safe during a dump. The I2C slave stretches SCL while the ISR is masked (longest span about 300 us).
+  `/readmemory` of the capture area during a dump still returns an in-progress bank: read it after `done`.
 - All other routes (`/currentpreset`, `/version`, `/bus/status`, `/dump/status`, ...) keep answering.
 
 ### Module gates

@@ -187,7 +187,8 @@ Decided with the app session: route shapes in §6. The rest are the builder-side
 - **(call) Capture (PR 2) keys on `write_counter`**, not `Wire.available()`: a byte arrived iff the
   counter changed. First-byte wait and expected byte count come from the query. The card-side receive
   path applies each 2-byte offset frame into FRAM instead of recording it, giving a flat bank image;
-  the completion frame `04 22 <addr> 0A 20` ends the job early.
+  the completion frame `04 22 <addr> 0A 20` ends the job only after at least one data byte (a completion
+  frame before any data is an acknowledgement, counted in `early_done`).
 - **(call) Jobs run in `loop()`**, one at a time, with a small state machine mirroring
   `Bus200eBridgeState`/`Bus200eMasterState`; routes start a job and return immediately; `/…/status`
   routes report it. `/ota/commit` and bus jobs are mutually exclusive.
@@ -245,7 +246,11 @@ Each PR is a branch off `master`, independently mergeable, with its own README s
 - `/bus/polldone` → sends `04 00 22 14 FF` (or `0x14` in v2 framing); `{"ok":true}` after it went out,
   `"error":"send_timeout"` if the send fails, `"busy"` during a scan.
 - Busy rules: while a scan runs `/bus/scan`, `/ota/commit`, `/getpresets?addr=`, `/setpresets?addr=` and
-  `/bus/polldone` answer `busy`. Capability `bus`; `version` 1.20.
+  `/bus/polldone` answer `busy`; as built in 1.21 the same applies to the other stock bus senders
+  (`/remoteenable`, `/remotedisable`, `/savepreset`, `/recallpreset`, `/sendmidibytes` and the direct MIDI
+  routes), every stock master send is refused inside `masterBeginTransmission` while a scan runs (USB MIDI
+  is dropped for the sweep), a 50 ms cool-down follows the last card-addressed transaction, and
+  `/bus/scan` and `/bus/polldone` keep the 1 s module-read guard. Capability `bus`; `version` 1.20.
 
 ### PR 2 — byte-counting capture (GET_DUMP) — keys frozen as built (1.21)
 
@@ -258,8 +263,8 @@ Each PR is a branch off `master`, independently mergeable, with its own README s
 - End: completion frame after data, `received >= len`, or `silence_ms` without a byte → `done`; no first byte in
   `first_wait_ms` → `failed` 5; master send refused or failed → `failed` 4. A completion frame before any data
   counts in `early_done` and does not end the job.
-- Data lines `[off_hi][off_lo][data]` from I2C 0x50 are applied at the offset: flat bank from FRAM 0, byte-identical
-  to a Xenomorpher GET_DUMP; `extent != received` means holes. Destination filter on the matched address
+- Data lines `[off_hi][off_lo][data]` from I2C 0x50 are applied at the offset: flat bank from FRAM 0, the same layout (benched on the 272e: same bank size and record grid, only edited records differ)
+  as a Xenomorpher GET_DUMP; `extent != received` means holes. Destination filter on the matched address
   (data from 0x50, completion from general call); other general-call frames reach the stock decoder.
 - Busy: `/bus/scan`, `/bus/polldone`, `/getpresets?addr`, `/setpresets?addr`, `/ota/commit`, `/dump`, `/remoteenable`,
   `/remotedisable`, `/savepreset`, `/recallpreset`, `/sendmidibytes` and the seven direct MIDI routes answer `busy`

@@ -170,7 +170,7 @@ Capability `dump`. All replies are HTTP 200 JSON; refusals are `{"ok":false,"err
 
 - `GET /dump?addr=HH[&len=N][&first_wait_ms=M][&silence_ms=S]` -> `{"ok":true}`. Masters a BACKUP to the module
   and counts the `[offset_hi][offset_lo][data...]` lines it writes to the card (I2C 0x50), applying each at its
-  offset in the FRAM scratch area (flat bank from FRAM 0, byte-identical to a Xenomorpher GET_DUMP). `addr` is two
+  offset in the FRAM scratch area (flat bank from FRAM 0, the same layout (benched on the 272e: same bank size and record grid, only edited records differ) as a Xenomorpher GET_DUMP). `addr` is two
   hex digits in `08..77`; `len` is the expected byte count (default 0 = silence mode, at most 0x2BD18);
   `first_wait_ms` defaults to 5000 (clamped 200..60000), `silence_ms` to 1000 (clamped 200..20000).
 - `GET /dump/status` -> `{"state":"idle|sending|waiting|transferring|done|failed","addr":"28","expected":990,"received":990,"extent":990,"lines":37,"dropped":0,"complete_frame":false,"early_done":0,"error":0,"elapsed_ms":147,"addr_log":"50 50 50"}`.
@@ -184,7 +184,7 @@ completion only from general call; other general-call frames (MIDI clock, 0x13 d
 
 Module gates: The firmware never arms remote control or sends POLL_DONE on its own; the client decides. The 272e writes the card only after a bus POLL_DONE since its power-up (`/bus/polldone`, harmless to repeat). The 251e's BACKUP handler is gated on its remote-enable flag (bus 0x16, the stock `/remoteenable` route, also sent by stock poll-on-start); without it the module answers with an immediate completion frame and no data (`early_done:1`, `received:0`). 0x16 is a general-call frame that arms remote control on every module on the bus, including ones the owner switched off at the panel, so a client should send it only when the owner wants that.
 
-Busy rule: during a dump, `/bus/scan`, `/bus/polldone`, `/getpresets?addr=`, `/setpresets?addr=`, `/ota/commit`,
+Busy rule (during a dump, and the same refusals and USB-MIDI drop during a bus scan; plus a 50 ms cool-down after the last transaction addressed to the card, and the 1 s module-read guard on `/bus/scan`, `/bus/polldone` and `/dump`): during a dump, `/bus/scan`, `/bus/polldone`, `/getpresets?addr=`, `/setpresets?addr=`, `/ota/commit`,
 another `/dump`, `/remoteenable`, `/remotedisable`, `/savepreset`, `/recallpreset`, `/sendmidibytes` and the seven
 direct MIDI routes answer `busy`; every stock master send is refused inside `masterBeginTransmission` while a bus
 job runs, and USB-MIDI and poll-on-start sends are dropped. `/readmemory` and `/writememory` stay available, but
@@ -204,17 +204,17 @@ the owner's say-so. Results are in `bench/RESULTS.md` ("PR 2"), the PR text in `
 
 `GET /version` returns (one line; shape from `wpm_version_format`):
 
-    {"version":"1.20","board":"mkr1000","loader":"fram-loader-1","capabilities":["version","ota","bus"],
+    {"version":"1.21","board":"mkr1000","loader":"fram-loader-1","capabilities":["version","ota","bus","dump"],
      "getpresets_wait":false,"usbMode":1,"pollOnStart":0,"reset_cause":"POR","uptime_s":123,"rssi":-45,
      "tcp_sockets_free":null,"app_crc32":"HEX"}
 
 | Field | Meaning |
 | --- | --- |
-| `version` | `FW_VERSION`, now "1.20". Every PR bumps it; clients key on `capabilities`, not the number |
+| `version` | `FW_VERSION`, now "1.21". Every PR bumps it; clients key on `capabilities`, not the number |
 | `build` | present only in builds made with `build.sh --tag`; placed right after `version` |
 | `board` | always "mkr1000" |
 | `loader` | "fram-loader-1" when a plausible loader is at flash 0x2000; key omitted otherwise (dev builds) |
-| `capabilities` | currently `["version","ota","bus"]`; later PRs append |
+| `capabilities` | currently `["version","ota","bus","dump"]`; later PRs append |
 | `getpresets_wait` | false |
 | `usbMode` | the stored USB mode (1 = Device, 0 = Host) |
 | `pollOnStart` | the stored "poll modules on startup" setting (0/1) |
@@ -233,7 +233,7 @@ Nothing existing changes (design spec section 3):
 
 - Every existing route keeps its URL, parameter order, reply shape and default behaviour. New parameters
   are optional and trailing. The stock pages (PresetManager, GetPresets, SetPresets, WriteFirmware, Setup,
-  home page) keep working; the Setup page shows "Firmware v1.20" (1.19 is the PR 0 / OTA release).
+  home page) keep working; the Setup page shows "Firmware v1.21" (1.19 is the PR 0 / OTA release).
 - The FRAM layout (`Firmware/fram_map.txt`) is untouched. New state lives only in the reserved range
   0x02BE4D-0x02BE7F and is zero on stock units.
 - USB identity (0x1209:0xFBA0 "Studio H Software USB Midi"), AP name BUCHLA200E and the I2C bus
@@ -244,7 +244,7 @@ Nothing existing changes (design spec section 3):
 at full speed), see Bench results.
 - New behaviour arrives only through new routes (`/version`, `/ota/*`, `/bus/*`). Refusals on new routes are
   HTTP 200 with `{"ok":false,"error":"<code>"}`.
-- `FW_VERSION` is "1.20" (1.19 with OTA, 1.20 with bus scan).
+- `FW_VERSION` is "1.21" (1.19 with OTA, 1.20 with bus scan, 1.21 with dump).
 
 ## Bench results
 
