@@ -19,7 +19,10 @@
 #include "wpm_dump_config.h"  // WPM_DUMP_ADDR_FILTER
 
 // Notes: every bus master send is refused while a bus job runs (HTTP routes answer busy; USB MIDI
-// and poll-on-start sends are dropped). /readmemory
+// and poll-on-start sends are dropped), and for 50 ms after the last transaction addressed to the
+// card (the module may still be streaming lines or sending its completion after the job ended).
+// While a dump runs the I2C ISR writes FRAM; the sketch's FRAM primitives are critical sections in
+// thread mode, so ordinary routes (/currentpreset, /version, settings) are safe meanwhile. /readmemory
 // and /writememory stay available, but the ISR writes FRAM concurrently: a read may return
 // garbage and a write may be lost, so clients wait for state "done" before reading the bank.
 

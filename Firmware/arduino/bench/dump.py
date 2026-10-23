@@ -2,7 +2,7 @@
 """Run a WPM byte-counting capture (firmware 1.21+, capability "dump") and read the bank back.
 
 Usage: dump.py --addr HH [--len N] [--first-wait MS] [--silence MS] [--out FILE] [--compare FILE]
-               [--polldone] [--base http://192.168.0.1] [--iface en1] [--timeout S] [--status-only]
+               [--polldone] [--remoteenable] [--base http://192.168.0.1] [--iface en1] [--timeout S] [--status-only]
 
 Starts GET /dump?addr=..[&len=..][&first_wait_ms=..][&silence_ms=..], polls /dump/status every
 0.5 s until "done" or "failed", prints the final status, then reads `extent` bytes from FRAM 0
@@ -95,10 +95,10 @@ def read_fram(host, port, length):
 
 def fmt_status(st):
     return ("state=%s addr=%s expected=%s received=%s extent=%s lines=%s dropped=%s "
-            "complete_frame=%s error=%s elapsed_ms=%s" % (
+            "complete_frame=%s early_done=%s error=%s elapsed_ms=%s addr_log=%r" % (
                 st.get("state"), st.get("addr"), st.get("expected"), st.get("received"),
                 st.get("extent"), st.get("lines"), st.get("dropped"), st.get("complete_frame"),
-                st.get("error"), st.get("elapsed_ms")))
+                st.get("early_done"), st.get("error"), st.get("elapsed_ms"), st.get("addr_log")))
 
 
 def main():

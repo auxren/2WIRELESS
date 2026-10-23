@@ -76,6 +76,32 @@ class WpmDumpJob {
   volatile bool complete_ = false;
 };
 
+// ---- Pure helpers for the device layer (desktop-tested) ----
+// What the dump ISR does with a transaction. addr is the matched 7-bit address (ignored when
+// addr_filter is false), n the byte count, f0/f3 the first and fourth bytes when n >= 4.
+enum WpmDumpFrameKind {
+  WPM_DUMP_FRAME_IGNORE,    // too short to be a line: consume and drop
+  WPM_DUMP_FRAME_DATA,      // a [off_hi][off_lo][data...] line
+  WPM_DUMP_FRAME_COMPLETE,  // 5-byte completion frame 04 .. <addr> 0A ..
+  WPM_DUMP_FRAME_OTHER      // anything else (general-call MIDI/display frames): stock path
+};
+// Filter on: card address (0x50) with n >= 3 is DATA (n < 3 IGNORE); a general call (0x00) of 5 bytes
+// is COMPLETE if f0 == 0x04 && f3 == 0x0A, else OTHER; everything else OTHER. Filter off: shape only
+// (COMPLETE, else DATA when n >= 3, else IGNORE).
+WpmDumpFrameKind wpm_dump_classify(uint8_t addr, int n, uint8_t f0, uint8_t f3, bool addr_filter);
+// Plan for a data line of n >= 3 bytes starting [hi][lo]: write_n bytes go to FRAM at offset, the
+// rest are dropped (beyond scratch_end, or the whole line when drop_past_expected, expected != 0 and
+// offset >= expected: the shape-parsing fallback).
+struct WpmDumpLinePlan {
+  uint32_t offset, write_n, dropped;
+};
+WpmDumpLinePlan wpm_dump_plan_line(uint8_t hi, uint8_t lo, int n, uint32_t expected, bool drop_past_expected,
+                                   uint32_t scratch_end = WPM_DUMP_SCRATCH_END);
+// Parses "addr=28&len=990&first_wait_ms=M&silence_ms=S" (no leading '?'). addr: exactly 2 hex digits,
+// either case, required. Numbers: 1..9 decimal digits. Waits are clamped to the class limits; len is
+// left for start() to range check. Unknown keys, empty or malformed values fail.
+bool wpm_dump_parse_args(const char* q, uint8_t* addr, uint32_t* len, uint32_t* first_wait, uint32_t* silence);
+
 const char* wpm_dump_state_str(WpmDumpState s);  // "idle"|"sending"|"waiting"|"transferring"|"done"|"failed"
 // {"state":"transferring","addr":"28","expected":990,"received":528,"extent":528,"lines":8,"dropped":0,
 //  "complete_frame":false,"early_done":0,"error":0,"elapsed_ms":1234}

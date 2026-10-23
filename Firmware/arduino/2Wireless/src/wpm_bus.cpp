@@ -9,6 +9,7 @@ bool wpm_bus_master_query(uint8_t addr);
 bool wpm_bus_master_polldone();
 bool wpm_v2_pin();  // digitalRead(V2VERSION_PIN); unlike v2version, not flipped by a /v2/ prefix
 extern volatile unsigned long readTime;  // millis() of the last module read (written in requestEvent)
+extern volatile unsigned long cardWriteTime;  // millis() of the last transaction addressed to the card (receiveEvent)
 uint8_t framRead(int addr);
 
 // Stock display cache written by setDisplayMessage(0, ...) on every 0x13 frame: [addr][7 chars].
@@ -42,6 +43,12 @@ bool wpm_bus_scan_active() { return scan.state() == WPM_SCAN_SCANNING; }
 
 bool wpm_bus_read_recent(uint32_t ms) { return readRecent(ms); }
 
+static const uint32_t CARD_WRITE_COOLDOWN_MS = 50;
+bool wpm_card_write_recent(uint32_t ms) { return (uint32_t)(millis() - (uint32_t)cardWriteTime) < ms; }
+bool wpm_bus_job_busy() {
+  return wpm_bus_scan_active() || wpm_dump_active() || wpm_card_write_recent(CARD_WRITE_COOLDOWN_MS);
+}
+
 static volatile bool job_master = false;
 void wpm_job_master_begin() { job_master = true; }
 void wpm_job_master_end() { job_master = false; }
@@ -67,7 +74,7 @@ void wpm_bus_handle_scan(WiFiClient& client, const String& urlString) {
     wpm_send_json(client, wpm_json_err("unsupported"));
     return;
   }
-  if (wpm_bus_scan_active() || wpm_dump_active() || readRecent(READ_BUSY_MS)) {
+  if (wpm_bus_job_busy() || readRecent(READ_BUSY_MS)) {
     scan.set_error(WPM_BUS_ERR_BUSY);
     wpm_send_json(client, wpm_json_err("busy"));
     return;
@@ -136,7 +143,8 @@ void wpm_bus_handle_scan_status(WiFiClient& client) {
 void wpm_bus_handle_status(WiFiClient& client) {
   bool seen = frame_seen;
   // Quiet: no slave frame and no module read for >= 50 ms (no frame ever counts as quiet).
-  bool quiet = (!seen || (uint32_t)(millis() - last_frame_ms) >= BUS_QUIET_MS) && !readRecent(BUS_QUIET_MS);
+  bool quiet = (!seen || (uint32_t)(millis() - last_frame_ms) >= BUS_QUIET_MS) && !readRecent(BUS_QUIET_MS) &&
+               !wpm_card_write_recent(BUS_QUIET_MS);
   int dialect = seen ? (wpm_v2_pin() ? 2 : 1) : 0;
   String body = "{\"wpm_present\":true,\"bus_quiet\":";
   body += quiet ? "true" : "false";
@@ -149,7 +157,7 @@ void wpm_bus_handle_status(WiFiClient& client) {
 }
 
 void wpm_bus_handle_polldone(WiFiClient& client) {
-  if (wpm_bus_scan_active() || wpm_dump_active() || readRecent(READ_BUSY_MS)) {
+  if (wpm_bus_job_busy() || readRecent(READ_BUSY_MS)) {
     scan.set_error(WPM_BUS_ERR_BUSY);
     wpm_send_json(client, wpm_json_err("busy"));
     return;

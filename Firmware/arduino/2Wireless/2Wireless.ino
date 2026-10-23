@@ -167,6 +167,8 @@ volatile int write_counter=0; //USed to auto increment write addresses during I2
 volatile int fram_address=0; //This is global only because it must span OnRequest calls during I2C READ from master. 
 volatile bool startup = true; //Used to free 206e when starting up.
 volatile bool write_i2c_to_fram = false; //Cache incoming i2c to FRAM.
+volatile unsigned long cardWriteTime = 0; //millis() of the last transaction addressed to the card (0x50); written in receiveEvent, read by wpm_bus.cpp.
+uint8_t wpm_isr_frame[256]; //the one ISR frame buffer, shared by the stock decoder path and the /dump path (receiveEvent cannot re-enter)
 volatile unsigned long readTime = 0; //used to detect idle to free up 206e at start; written in requestEvent, read by wpm_bus.cpp.
 volatile bool i2c_guard = false; //attempt to prevent switch to master while receiving
 
@@ -944,6 +946,22 @@ void loop() {
   pollUsbMidi(isUsbDevice);
 }
 
+//FRAM primitives are critical sections in thread mode. During /dump the I2C ISR calls framWrite while the
+//main loop may be inside its own FRAM SPI transaction (a route reading the preset or writing a setting): an
+//ISR write landing between a main-loop WREN and WRITE, or inside a read, would be lost or would corrupt the
+//main-loop access. In ISR context (VECTACTIVE != 0) the lock is a no-op. The I2C slave stretches SCL while
+//the ISR is masked; the longest masked span is framWriteHexString's 128-byte run (about 300 us).
+static inline uint32_t framLock() {
+    if (SCB->ICSR & SCB_ICSR_VECTACTIVE_Msk) return 0xFFFFFFFFu;
+    uint32_t p = __get_PRIMASK();
+    __disable_irq();
+    return p;
+}
+static inline void framUnlock(uint32_t p) {
+    if (p != 0xFFFFFFFFu) __set_PRIMASK(p);
+}
+
+//Callers hold framLock() across this and the WRITE transaction that follows (WEL latch).
 void framEnableWrite(){
     SPI.beginTransaction(spiSettings);
     digitalWrite(SPI_CS, LOW); //Set CS low to select chip
@@ -957,6 +975,7 @@ void framWrite(int addr, uint8_t value){
     uint8_t addr_byte_upper = (0x3F0000 & addr) >>16;
     uint8_t addr_byte_middle = (0x00FF00 & addr) >>8;
     uint8_t addr_byte_lower = (0x0000FF & addr);
+    uint32_t lk = framLock();
     framEnableWrite();
     SPI.beginTransaction(spiSettings);
     digitalWrite(SPI_CS, LOW); //Set CS low to select chip
@@ -967,6 +986,7 @@ void framWrite(int addr, uint8_t value){
     SPI.transfer(value); // send value
     digitalWrite(SPI_CS, HIGH); //Set CS high to de-select
     SPI.endTransaction();
+    framUnlock(lk);
 }
 
 void framWriteHexString(int addr, String value){
@@ -974,6 +994,7 @@ void framWriteHexString(int addr, String value){
     uint8_t addr_byte_upper = (0x3F0000 & addr) >>16;
     uint8_t addr_byte_middle = (0x00FF00 & addr) >>8;
     uint8_t addr_byte_lower = (0x0000FF & addr);
+    uint32_t lk = framLock();
     framEnableWrite();
     SPI.beginTransaction(spiSettings);
     digitalWrite(SPI_CS, LOW); //Set CS low to select chip
@@ -989,6 +1010,7 @@ void framWriteHexString(int addr, String value){
     }
     digitalWrite(SPI_CS, HIGH); //Set CS high to de-select
     SPI.endTransaction();
+    framUnlock(lk);
 }
 
 uint8_t framRead(int addr){
@@ -997,6 +1019,7 @@ uint8_t framRead(int addr){
     uint8_t addr_byte_upper = (0x3F0000 & addr) >>16;
     uint8_t addr_byte_middle = (0x00FF00 & addr) >>8;
     uint8_t addr_byte_lower = (0x0000FF & addr);
+    uint32_t lk = framLock();
     SPI.beginTransaction(spiSettings);
     digitalWrite(SPI_CS, LOW); //Set CS low to select chip
     SPI.transfer(FRAM_READ); // send write enable OPCODE
@@ -1006,6 +1029,7 @@ uint8_t framRead(int addr){
     result = SPI.transfer(0); // read byte
     digitalWrite(SPI_CS, HIGH); //Set CS high to de-select
     SPI.endTransaction();
+    framUnlock(lk);
     return result;
 }
 
@@ -1414,6 +1438,7 @@ void wpm_stock_decode_frame(const uint8_t* f, int n) {
 void receiveEvent(int howMany) {
     if(i2c_guard) return; //master busy
     DEBUG_PRINTLN("receiveEvent");
+    if (Wire.lastAddress() == (0x50 | CARD_ADDRESS) && howMany > 0) cardWriteTime = millis(); //card-write cool-down for the master guard
     if (wpm_dump_active() && wpm_dump_isr_frame(howMany)) return; //byte-counting capture (/dump); false = leave this frame to the stock path
     if (write_i2c_to_fram) {
       while (Wire.available() > 0) { 
@@ -1425,9 +1450,9 @@ void receiveEvent(int howMany) {
     } else {
       //Read the whole frame first, then decode from the buffer: the same decoder serves the general-call
       //frames that the /dump ISR path forwards (wpm_stock_decode_frame). Stock only acted on frames > 4 bytes.
-      static uint8_t frame[256]; //static: keeps 256 bytes off the ISR stack; receiveEvent cannot re-enter
+      uint8_t* frame = wpm_isr_frame; //static buffer: keeps 256 bytes off the ISR stack
       int fn = 0;
-      while (Wire.available() > 0 && fn < (int)sizeof frame) frame[fn++] = (uint8_t)Wire.read();
+      while (Wire.available() > 0 && fn < (int)sizeof wpm_isr_frame) frame[fn++] = (uint8_t)Wire.read();
       if (fn > 4) {
         wpm_stock_decode_frame(frame, fn);
         Wire.flush();
@@ -1559,7 +1584,7 @@ void sendPollingComplete() {
 
 
 void sendQuery(byte address) {
-    if (wpm_bus_scan_active() || wpm_dump_active()) return; //bus job owns the bus
+    if (wpm_bus_job_busy()) return; //not called today; guarded for symmetry with the other senders
     //Query Module
     if (v2version) {
         //Nothing. Query is not supported
@@ -1910,7 +1935,7 @@ void sendMidiBend(byte mask, byte bend_lsb, byte bend_msb){
 
 int masterBeginTransmission(int addr){
   //A bus job (scan or dump) owns the bus: only its own sends (bracketed by wpm_job_master_begin/end) get through.
-  if ((wpm_bus_scan_active() || wpm_dump_active()) && !wpm_job_master_allowed()) return 1;
+  if (wpm_bus_job_busy() && !wpm_job_master_allowed()) return 1;
   i2c_guard = true; //prevent slave interrupt
   int result = 0;
   while (sercom2.isBusBusyWIRE()) {   
@@ -2138,9 +2163,9 @@ void handleWifiRequest(WiFiClient client, String urlString){
        urlString.indexOf("/savepreset?preset") >= 0 || urlString.indexOf("/recallpreset?preset") >= 0 ||
        urlString.indexOf("/sendmidibytes") >= 0 ||
        urlString.indexOf("/midinoteon?chan") >= 0 || urlString.indexOf("/midinoteoff?chan") >= 0 ||
-       urlString.indexOf("/midiclockstart") >= 0 || urlString.indexOf("/midiclockstop") >= 0 ||
-       urlString.indexOf("/midiclock") >= 0 || urlString.indexOf("/midifinetune?chan") >= 0 ||
-       urlString.indexOf("/midibend?chan") >= 0) && (wpm_bus_scan_active() || wpm_dump_active())) {
+       urlString.indexOf("/midiclock") >= 0 || //also covers /midiclockstart and /midiclockstop
+       urlString.indexOf("/midifinetune?chan") >= 0 ||
+       urlString.indexOf("/midibend?chan") >= 0) && wpm_bus_job_busy()) {
     wpm_send_json(client, wpm_json_err("busy")); //bus scan or dump owns the bus
   }
   else if (urlString.indexOf("/remoteenable") >= 0) {
@@ -2305,7 +2330,7 @@ void handleWifiRequest(WiFiClient client, String urlString){
     DEBUG_HTTP_PRINTHEXLN(midiMessage.byte3);
     processMidiMessage(midiMessage);
   }
-  else if (urlString.indexOf("/getpresets?addr") >= 0 && (wpm_bus_scan_active() || wpm_dump_active())) {
+  else if (urlString.indexOf("/getpresets?addr") >= 0 && wpm_bus_job_busy()) {
     wpm_send_json(client, wpm_json_err("busy")); //bus scan or dump owns the bus
   }
   else if (urlString.indexOf("/getpresets?addr") >= 0) {
@@ -2366,7 +2391,7 @@ void handleWifiRequest(WiFiClient client, String urlString){
     client.println("0");
     client.println();
     write_i2c_to_fram = false; //Stop Caching incoming i2c to FRAM 
-  } else if (urlString.indexOf("/setpresets?addr") >= 0 && (wpm_bus_scan_active() || wpm_dump_active())) {
+  } else if (urlString.indexOf("/setpresets?addr") >= 0 && wpm_bus_job_busy()) {
     wpm_send_json(client, wpm_json_err("busy")); //bus scan or dump owns the bus
   } else if (urlString.indexOf("/setpresets?addr") >= 0) {
     writeHeader(client,"HTTP/1.1 200 OK","Content-type:text/plain",0);

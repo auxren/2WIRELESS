@@ -249,8 +249,8 @@ void TwoWireByte::onService(void)
     {
 #if WPM_DUMP_ADDR_FILTER
       // WPM: SAMD21 I2CS puts the matched address (and R/W bit) in DATA while AMATCH is set. Read the
-      // raw register BEFORE the ACK/command below (not readDataWIRE(), which has smart-mode side
-      // effects). The WPM bus is on sercom2 (SERCOM2 is PERIPH_WIRE for this board). 7-bit: a
+      // raw register BEFORE the ACK/command below (a plain read of DATA; readDataWIRE() is
+      // avoided only so the core's data path never sees the address byte). The WPM bus is on sercom2 (SERCOM2 is PERIPH_WIRE for this board). 7-bit: a
       // general call reads 0x00, the card address 0x50.
       _lastAddress = (uint8_t)(SERCOM2->I2CS.DATA.reg >> 1);
 #endif

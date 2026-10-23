@@ -18,7 +18,13 @@ bool wpm_bus_scan_active();  // scan state == SCANNING
 void wpm_job_master_begin();
 void wpm_job_master_end();
 bool wpm_job_master_allowed();
-bool wpm_bus_read_recent(uint32_t ms);  // a module read within the last ms milliseconds
+bool wpm_bus_read_recent(uint32_t ms);
+// A module wrote to the card address (0x50) within the last ms milliseconds (set in receiveEvent).
+bool wpm_card_write_recent(uint32_t ms);
+// The bus belongs to a job: a scan or dump runs, or a module wrote to the card within the 50 ms
+// cool-down (a finished or aborted dump's module may still be streaming lines or sending its
+// completion). Every stock master send is refused while this holds, except a job's own sends.
+bool wpm_bus_job_busy();  // a module read within the last ms milliseconds
 
 // urlString: "...GET /bus/scan?first=HH&last=HH&window=MS ...".
 void wpm_bus_handle_scan(WiFiClient& client, const String& urlString);

@@ -332,6 +332,51 @@ int main() {
     CHECK(j.received() == 66 && j.extent() == 0x142 && j.lines() == 1 && j.dropped() == 3);
     CHECK(j.elapsed_ms(99) == 20);
   }
+  {  // short_frame_ignored / classify
+    CHECK(wpm_dump_classify(0x50, 2, 0, 0, true) == WPM_DUMP_FRAME_IGNORE);
+    CHECK(wpm_dump_classify(0x50, 3, 0, 0, true) == WPM_DUMP_FRAME_DATA);
+    CHECK(wpm_dump_classify(0x50, 5, 0x04, 0x0A, true) == WPM_DUMP_FRAME_DATA);  // a card line, even if it looks like a completion
+    CHECK(wpm_dump_classify(0x00, 5, 0x04, 0x0A, true) == WPM_DUMP_FRAME_COMPLETE);
+    CHECK(wpm_dump_classify(0x00, 5, 0x08, 0x0F, true) == WPM_DUMP_FRAME_OTHER);  // MIDI clock
+    CHECK(wpm_dump_classify(0x00, 11, 0x04, 0x13, true) == WPM_DUMP_FRAME_OTHER);
+    CHECK(wpm_dump_classify(0xFF, 5, 0x04, 0x0A, true) == WPM_DUMP_FRAME_OTHER);
+    CHECK(wpm_dump_classify(0xFF, 5, 0x04, 0x0A, false) == WPM_DUMP_FRAME_COMPLETE);
+    CHECK(wpm_dump_classify(0xFF, 5, 0x08, 0x0F, false) == WPM_DUMP_FRAME_DATA);
+    CHECK(wpm_dump_classify(0xFF, 2, 0, 0, false) == WPM_DUMP_FRAME_IGNORE);
+  }
+  {  // offset_out_of_range_dropped / plan_line
+    WpmDumpLinePlan p = wpm_dump_plan_line(0x01, 0x00, 68, 0, false);
+    CHECK(p.offset == 0x100 && p.write_n == 66 && p.dropped == 0);
+    p = wpm_dump_plan_line(0x01, 0x00, 68, 0, false, 0x120);  // 32 fit
+    CHECK(p.write_n == 32 && p.dropped == 34);
+    p = wpm_dump_plan_line(0x01, 0x40, 8, 0, false, 0x120);  // starts beyond the end
+    CHECK(p.write_n == 0 && p.dropped == 6);
+    p = wpm_dump_plan_line(0x03, 0xDE, 68, 990, true);  // offset 990 == expected: dropped, not written
+    CHECK(p.write_n == 0 && p.dropped == 66);
+    p = wpm_dump_plan_line(0x03, 0xDD, 4, 990, true);  // offset 989 < expected
+    CHECK(p.write_n == 2 && p.dropped == 0);
+    p = wpm_dump_plan_line(0x03, 0xDE, 4, 0, true);  // expected unknown: never dropped
+    CHECK(p.write_n == 2);
+  }
+  {  // parse_args
+    uint8_t a = 0;
+    uint32_t len, fw, sil;
+    CHECK(wpm_dump_parse_args("addr=28", &a, &len, &fw, &sil) && a == 0x28 && len == 0 && fw == 5000 && sil == 1000);
+    CHECK(wpm_dump_parse_args("addr=2A&len=990&first_wait_ms=100&silence_ms=99999", &a, &len, &fw, &sil));
+    CHECK(a == 0x2A && len == 990 && fw == WPM_DUMP_FIRST_WAIT_MIN_MS && sil == WPM_DUMP_SILENCE_MAX_MS);
+    CHECK(wpm_dump_parse_args("silence_ms=500&addr=5e", &a, &len, &fw, &sil) && a == 0x5E && sil == 500);
+    CHECK(!wpm_dump_parse_args("", &a, &len, &fw, &sil));                    // addr required
+    CHECK(!wpm_dump_parse_args("len=5", &a, &len, &fw, &sil));
+    CHECK(!wpm_dump_parse_args("addr=28&bogus=1", &a, &len, &fw, &sil));     // unknown key
+    CHECK(!wpm_dump_parse_args("addr=28&len=", &a, &len, &fw, &sil));        // empty value
+    CHECK(!wpm_dump_parse_args("addr=28&len", &a, &len, &fw, &sil));         // no '='
+    CHECK(!wpm_dump_parse_args("addr=28&len=1234567890", &a, &len, &fw, &sil));  // 10 digits
+    CHECK(wpm_dump_parse_args("addr=28&len=123456789", &a, &len, &fw, &sil) && len == 123456789u);
+    CHECK(!wpm_dump_parse_args("addr=2&len=1", &a, &len, &fw, &sil));
+    CHECK(!wpm_dump_parse_args("addr=2G", &a, &len, &fw, &sil));
+    CHECK(!wpm_dump_parse_args("addr=028", &a, &len, &fw, &sil));
+    CHECK(!wpm_dump_parse_args("addr=28&len=12x", &a, &len, &fw, &sil));
+  }
   {  // state strings
     CHECK(std::strcmp(wpm_dump_state_str(WPM_DUMP_IDLE), "idle") == 0);
     CHECK(std::strcmp(wpm_dump_state_str(WPM_DUMP_SENDING), "sending") == 0);
